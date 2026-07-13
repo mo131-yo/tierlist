@@ -80,26 +80,46 @@ function mapMedia(m: AlMedia, kind: "anime" | "manga"): NormalizedMedia {
   };
 }
 
-/** Аниме + манга нэг GraphQL request-ээр зэрэг хайна */
-export async function searchAnilist(query: string): Promise<NormalizedMedia[]> {
+async function searchAnilistMedia(
+  query: string,
+  type: "ANIME" | "MANGA",
+  extraFilter = "",
+  perPage = 50,
+): Promise<NormalizedMedia[]> {
   const gql = `
     query ($search: String) {
-      anime: Page(perPage: 12) {
-        media(search: $search, type: ANIME, sort: SEARCH_MATCH) { ${MEDIA_FIELDS} }
-      }
-      manga: Page(perPage: 8) {
-        media(search: $search, type: MANGA, sort: SEARCH_MATCH) { ${MEDIA_FIELDS} }
+      Page(perPage: ${perPage}) {
+        media(search: $search, type: ${type}${extraFilter}, sort: SEARCH_MATCH) { ${MEDIA_FIELDS} }
       }
     }`;
   const json = await anilistFetch(gql, { search: query });
-  const data = json.data as {
-    anime: { media: AlMedia[] };
-    manga: { media: AlMedia[] };
-  };
-  return [
-    ...data.anime.media.map((m) => mapMedia(m, "anime")),
-    ...data.manga.media.map((m) => mapMedia(m, "manga")),
-  ].filter((m) => m.posterPath);
+  const data = json.data as { Page: { media: AlMedia[] } };
+  return data.Page.media
+    .map((m) => mapMedia(m, type === "ANIME" ? "anime" : "manga"))
+    .filter((m) => m.posterPath);
+}
+
+export function searchAnilistAnime(query: string) {
+  return searchAnilistMedia(query, "ANIME");
+}
+
+export function searchAnilistManga(query: string) {
+  return searchAnilistMedia(query, "MANGA");
+}
+
+/**
+ * Улирлын хайлтад зориулсан: AniList дээр анимегийн улирал бүр тусдаа бүртгэл
+ * байдаг (ж: "BLUE LOCK" ба "BLUE LOCK Season 2") — TMDB улирлуудыг нэгтгэсэн
+ * үед (Blue Lock кейс) эндээс жинхэнэ улирлын задаргаа гарна.
+ * Зөвхөн цуврал хэлбэрийг (TV, TV_SHORT, ONA) авна — кино/OVA хасагдана.
+ */
+export function searchAnilistTvSeasons(query: string) {
+  return searchAnilistMedia(
+    query,
+    "ANIME",
+    ", format_in: [TV, TV_SHORT, ONA]",
+    25,
+  );
 }
 
 interface AlCharacter {
@@ -117,7 +137,7 @@ export async function searchAnilistCharacters(
 ): Promise<NormalizedMedia[]> {
   const gql = `
     query ($search: String) {
-      Page(perPage: 20) {
+      Page(perPage: 50) {
         characters(search: $search, sort: SEARCH_MATCH) {
           id
           name { full }

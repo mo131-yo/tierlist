@@ -36,10 +36,12 @@ export function TierRow({
 
   return (
     <div className="flex overflow-hidden rounded-xl border border-white/5 bg-card/60">
-      {/* Label */}
+      {/* Label — шууд дарахад нэр + өнгө засах dialog нээгдэнэ */}
       <div
-        className="relative flex w-20 shrink-0 items-center justify-center px-1"
+        className="group/label relative flex w-20 shrink-0 cursor-pointer items-center justify-center px-1"
         style={{ backgroundColor: row.color }}
+        onClick={() => onEdit(row)}
+        title="Дарж нэр, өнгө засах"
       >
         <span
           className="max-w-full break-words text-center text-xl font-extrabold tracking-wide"
@@ -47,6 +49,7 @@ export function TierRow({
         >
           {row.label}
         </span>
+        <Pencil className="pointer-events-none absolute bottom-1 left-1 h-3 w-3 text-black/0 transition-colors group-hover/label:text-black/50" />
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -54,6 +57,7 @@ export function TierRow({
                 variant="ghost"
                 size="icon"
                 className="absolute right-0.5 top-0.5 h-6 w-6 text-black/50 hover:bg-black/10 hover:text-black/80"
+                onClick={(e) => e.stopPropagation()}
               />
             }
           >

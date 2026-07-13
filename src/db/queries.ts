@@ -16,8 +16,12 @@ const DAY = 24 * 60 * 60 * 1000;
 
 // Category бүрийн TTL — эх сурвалж бүрийн metadata хэр хурдан хуучирдагаас хамаарна
 const CACHE_TTL_MS: Record<Category, number> = {
-  movies: 7 * DAY, // rating/popularity долоо хоног тутам шинэчлэгдэнэ
+  all: 7 * DAY,
+  movie: 7 * DAY, // rating/popularity долоо хоног тутам шинэчлэгдэнэ
+  tv: 7 * DAY,
+  season: 7 * DAY, // шинэ улирал нэмэгдэж болно
   anime: 30 * DAY, // AniList metadata бараг өөрчлөгддөггүй
+  manga: 30 * DAY,
   character: 30 * DAY,
   book: 30 * DAY,
   wiki: 3 * DAY, // wiki контент илүү хурдан хуучирдаг

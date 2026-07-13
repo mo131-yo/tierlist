@@ -7,7 +7,7 @@ export async function GET(req: NextRequest) {
   if (!q) return NextResponse.json({ items: [] });
 
   const catParam = req.nextUrl.searchParams.get("cat");
-  const cat: Category = isCategory(catParam) ? catParam : "movies";
+  const cat: Category = isCategory(catParam) ? catParam : "all";
 
   try {
     const t0 = performance.now();

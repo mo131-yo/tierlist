@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Plus, Trash2, Loader2, Clapperboard } from "lucide-react";
+import { Plus, Trash2, Loader2, Clapperboard, Link2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { getPosterUrl } from "@/lib/imageStore";
+import { copyText } from "@/lib/clipboard";
 
 // Locale-аас хамааралгүй тогтмол формат — сервер/browser дээр ижил гарч
 // hydration mismatch үүсгэхгүй
@@ -137,17 +138,36 @@ export function HomeClient({ lists }: { lists: HomeListItem[] }) {
                     {l.itemCount} item · {formatDate(l.updatedAt)}
                   </p>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setDeleting(l);
-                  }}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+                <div className="flex shrink-0 items-center">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    title="Линк хуулах"
+                    className="text-muted-foreground opacity-0 transition-opacity hover:text-primary group-hover:opacity-100"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      const ok = await copyText(
+                        `${window.location.origin}/t/${l.id}`,
+                      );
+                      if (ok) toast.success("Линк хуулагдлаа");
+                      else toast.error("Хуулж чадсангүй");
+                    }}
+                  >
+                    <Link2 className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    title="Устгах"
+                    className="text-muted-foreground opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleting(l);
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
             </motion.div>
           ))}

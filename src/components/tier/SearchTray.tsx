@@ -5,21 +5,27 @@ import { Search, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SearchPoster, POSTER_H } from "./PosterCard";
-import type { MediaItem } from "@/lib/types";
+import type { Category, MediaItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const DEBOUNCE_MS = 350;
 const CLIENT_CACHE_MAX = 50; // LRU: үүнээс хэтэрвэл хамгийн хуучин query устгагдана
-
-type Category = "movies" | "anime" | "character" | "book" | "wiki";
+const VISIBLE_LIMIT = 10; // эхний харагдах үр дүн — илүү нь «see more»-ийн ард
 
 const CATEGORY_TABS: { cat: Category; label: string; placeholder: string }[] = [
-  { cat: "movies", label: "🎬 Кино/Сериал", placeholder: "Кино, сериал хайх… (ж: interstellar, breaking bad)" },
-  { cat: "anime", label: "🎌 Аниме/Манга", placeholder: "Аниме, манга хайх… (ж: naruto, berserk)" },
+  { cat: "all", label: "🔎 Бүгд", placeholder: "Юу ч хай — кино, аниме, дүр, ном, хоол…" },
+  { cat: "movie", label: "🎬 Кино", placeholder: "Кино хайх… (ж: interstellar, oppenheimer)" },
+  { cat: "tv", label: "📺 Сериал", placeholder: "Сериал хайх… (ж: breaking bad, squid game)" },
+  { cat: "season", label: "🎞 Улирал", placeholder: "Сериалын нэрээр хайхад улирал бүр нь гарна… (ж: stranger things)" },
+  { cat: "anime", label: "🎌 Аниме", placeholder: "Аниме хайх… (ж: naruto, blue lock)" },
+  { cat: "manga", label: "📖 Манга", placeholder: "Манга хайх… (ж: berserk, one piece)" },
   { cat: "character", label: "👤 Дүр", placeholder: "Аниме/мангагийн дүр хайх… (ж: levi, gojo)" },
   { cat: "book", label: "📚 Ном", placeholder: "Ном хайх… (ж: harry potter, dune)" },
   { cat: "wiki", label: "🌐 Бусад", placeholder: "Юу ч хай: хуушуур, ferrari, messi…" },
 ];
+
+// Эдгээр таб дээр poster доор subtitle гарна (холимог/ижил нэртэй үр дүнг ялгахад)
+const SUBTITLE_CATS: ReadonlySet<Category> = new Set(["character", "season", "all"]);
 
 // Session доторх client кэш: `${cat}:${query}` → items. LRU (50 хүртэл).
 const clientCache = new Map<string, MediaItem[]>();
@@ -53,11 +59,12 @@ export function SearchTray({
   onSelect: (item: MediaItem) => void;
   onResults: (items: MediaItem[]) => void;
 }) {
-  const [cat, setCat] = useState<Category>("movies");
+  const [cat, setCat] = useState<Category>("all");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<MediaItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [rateLimited, setRateLimited] = useState(false);
+  const [expanded, setExpanded] = useState(false); // see-more дарсан эсэх
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestKey = useRef("");
@@ -110,6 +117,7 @@ export function SearchTray({
     const key = `${activeCat}:${q}`;
     latestKey.current = key;
     setRateLimited(false);
+    setExpanded(false); // шинэ хайлт бүрд эхний 10 руу буцна
 
     // Debounce: завсрын query (n, na, nar...) энд устгагдах тул сервер лүү явдаггүй
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -196,24 +204,44 @@ export function SearchTray({
             />
           ))
         ) : results.length > 0 ? (
-          results.map((item) => (
-            <div key={item.id} className="flex w-[72px] shrink-0 flex-col gap-0.5">
-              <SearchPoster
-                item={item}
-                onBoard={boardItemIds.has(item.id)}
-                selected={selectedId === item.id}
-                onSelect={onSelect}
-              />
-              {cat === "character" && item.subtitle && (
-                <span
-                  className="truncate text-center text-[9px] leading-tight text-muted-foreground/70"
-                  title={item.subtitle}
+          <>
+            {(expanded ? results : results.slice(0, VISIBLE_LIMIT)).map(
+              (item) => (
+                <div
+                  key={item.id}
+                  className="flex w-[72px] shrink-0 flex-col gap-0.5"
                 >
-                  {item.subtitle}
+                  <SearchPoster
+                    item={item}
+                    onBoard={boardItemIds.has(item.id)}
+                    selected={selectedId === item.id}
+                    onSelect={onSelect}
+                  />
+                  {SUBTITLE_CATS.has(cat) && item.subtitle && (
+                    <span
+                      className="truncate text-center text-[9px] leading-tight text-muted-foreground/70"
+                      title={item.subtitle}
+                    >
+                      {item.subtitle}
+                    </span>
+                  )}
+                </div>
+              ),
+            )}
+            {!expanded && results.length > VISIBLE_LIMIT && (
+              <button
+                type="button"
+                onClick={() => setExpanded(true)}
+                className="glass flex shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-white/10 text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+                style={{ width: 72, height: POSTER_H }}
+              >
+                <span className="text-lg font-bold">
+                  +{results.length - VISIBLE_LIMIT}
                 </span>
-              )}
-            </div>
-          ))
+                <span className="text-[10px]">бүгдийг харах</span>
+              </button>
+            )}
+          </>
         ) : (
           <p className="px-2 text-sm text-muted-foreground/60">
             {query.trim()

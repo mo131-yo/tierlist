@@ -25,6 +25,7 @@ import { toast } from "sonner";
 import {
   ArrowLeft,
   Download,
+  Link2,
   Loader2,
   Plus,
   Check,
@@ -40,6 +41,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { copyText } from "@/lib/clipboard";
 import { TierRow } from "./TierRow";
 import { SearchTray } from "./SearchTray";
 import { DetailPanel } from "./DetailPanel";
@@ -54,6 +56,12 @@ import {
 import { cn } from "@/lib/utils";
 
 const TRAY_ID = "tray";
+
+// PNG export: утас/цонхны хэмжээ, scroll-оос үл хамааран энэ өргөнтэй
+// desktop layout-аар export хийгдэнэ
+const EXPORT_WIDTH = 1200;
+// Canvas-ийн аюулгүй дээд хязгаар — үүнээс давбал pixelRatio буурна
+const MAX_EXPORT_PIXELS = 16_000_000;
 
 function UnrankedTray({
   itemIds,
@@ -306,24 +314,50 @@ export function TierBoard({
     setEditingRow(null);
   }
 
-  // ---------- PNG Export (CORS-гүй: proxy + далд clone) ----------
+  // ---------- PNG Export (CORS-гүй: proxy + далд clone, бүтэн grid) ----------
   async function exportPng() {
     const node = boardRef.current;
     if (!node) return;
     setExporting(true);
     const wrapper = document.createElement("div");
     try {
-      // Далд clone дээр ажиллана — дэлгэцийн UI огт хөндөгдөхгүй
+      // Далд clone дээр ажиллана — дэлгэцийн UI огт хөндөгдөхгүй.
+      // АНХААР: boardRef доторх компонентуудад (TierRow, PosterCard) sm:/md:/lg:
+      // responsive class нэмж болохгүй — тэдгээр нь viewport-media query тул
+      // EXPORT_WIDTH-ийн fixed layout-ыг үл тоомсорлуулна (одоогоор байхгүй).
       const clone = node.cloneNode(true) as HTMLElement;
-      wrapper.style.cssText = "position:fixed;left:-100000px;top:0;z-index:-1;";
-      clone.style.width = `${node.offsetWidth}px`;
-      wrapper.appendChild(clone);
+      wrapper.style.cssText = `position:fixed;left:-100000px;top:0;z-index:-1;width:${EXPORT_WIDTH}px;`;
+
+      // Export-ийн бүрэн frame: гарчиг + board + брэнд тэмдэг
+      const exportRoot = document.createElement("div");
+      exportRoot.style.cssText = `width:${EXPORT_WIDTH}px;padding:24px;background:#111118;`;
+
+      const header = document.createElement("div");
+      header.textContent = title;
+      header.style.cssText =
+        "color:#fff;font-size:30px;font-weight:800;padding:4px 8px 16px;font-family:sans-serif;";
+
+      const brand = document.createElement("div");
+      brand.textContent = "CineTier";
+      brand.style.cssText =
+        "color:rgba(255,255,255,0.35);font-size:12px;text-align:right;padding:10px 8px 0;font-family:sans-serif;";
+
+      clone.style.width = "100%";
+      exportRoot.append(header, clone, brand);
+      wrapper.appendChild(exportRoot);
       document.body.appendChild(wrapper);
 
-      // TMDB (cross-origin) зургуудыг proxy-гоор base64 болгож урьдчилж уншина
-      const imgs = Array.from(clone.querySelectorAll("img"));
+      if (exportRoot.offsetWidth !== EXPORT_WIDTH) {
+        console.warn(
+          `[export] clone width ${exportRoot.offsetWidth} ≠ ${EXPORT_WIDTH} — responsive class нэвтэрсэн байж магадгүй`,
+        );
+      }
+
+      // Cross-origin зургуудыг proxy-гоор base64 болгож урьдчилж уншина
+      const imgs = Array.from(exportRoot.querySelectorAll("img"));
       await Promise.all(
         imgs.map(async (img) => {
+          img.loading = "eager"; // далд clone дотор lazy skip хийхээс сэргийлнэ
           const src = img.src;
           if (!src) return;
           try {
@@ -350,9 +384,20 @@ export function TierBoard({
         }),
       );
 
-      const dataUrl = await toPng(clone, {
+      // Чанар: DPR≥2 дэлгэцэд 3, бусад нь 2; маш урт board дээр canvas
+      // 16MP-ээс давахгүй байхаар 3→2→1 рүү автоматаар бууруулна
+      let ratio = (window.devicePixelRatio ?? 1) >= 2 ? 3 : 2;
+      const exportHeight = exportRoot.offsetHeight;
+      while (
+        ratio > 1 &&
+        EXPORT_WIDTH * exportHeight * ratio * ratio > MAX_EXPORT_PIXELS
+      ) {
+        ratio--;
+      }
+
+      const dataUrl = await toPng(exportRoot, {
         backgroundColor: "#111118",
-        pixelRatio: 2,
+        pixelRatio: ratio,
       });
       const a = document.createElement("a");
       a.href = dataUrl;
@@ -400,6 +445,17 @@ export function TierBoard({
             <span className="text-red-400">Хадгалж чадсангүй</span>
           )}
         </span>
+        <Button
+          variant="ghost"
+          onClick={async () => {
+            const ok = await copyText(`${window.location.origin}/t/${list.id}`);
+            if (ok) toast.success("Линк хуулагдлаа");
+            else toast.error("Хуулж чадсангүй");
+          }}
+        >
+          <Link2 className="h-4 w-4" />
+          Хуваалцах
+        </Button>
         <Button onClick={exportPng} disabled={exporting} variant="secondary">
           {exporting ? (
             <Loader2 className="h-4 w-4 animate-spin" />

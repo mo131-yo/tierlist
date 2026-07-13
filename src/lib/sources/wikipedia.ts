@@ -19,7 +19,7 @@ export async function searchWikipedia(
     action: "query",
     generator: "search",
     gsrsearch: query,
-    gsrlimit: "20",
+    gsrlimit: "30", // extracts exlimit нь 20 хүртэл тул сүүлийн 10 нь overview-гүй байж болно (DetailPanel нөхцөлт тул OK)
     prop: "pageimages|description|extracts",
     piprop: "thumbnail",
     pithumbsize: "600",

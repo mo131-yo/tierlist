@@ -36,16 +36,29 @@ export interface TierListMeta {
   updatedAt: number;
 }
 
-export const CATEGORIES = ["movies", "anime", "character", "book", "wiki"] as const;
+export const CATEGORIES = [
+  "all",
+  "movie",
+  "tv",
+  "season",
+  "anime",
+  "manga",
+  "character",
+  "book",
+  "wiki",
+] as const;
 export type Category = (typeof CATEGORIES)[number];
 
 /** Item-ийн id prefix → category (сервер TTL + client аль алинд) */
 export function categoryOfItemId(id: string): Category {
-  if (id.startsWith("al-a-") || id.startsWith("al-m-")) return "anime";
+  if (id.startsWith("tv-")) return "tv";
+  if (id.startsWith("season-")) return "season";
+  if (id.startsWith("al-a-")) return "anime";
+  if (id.startsWith("al-m-")) return "manga";
   if (id.startsWith("al-c-")) return "character";
   if (id.startsWith("book-")) return "book";
   if (id.startsWith("wiki-")) return "wiki";
-  return "movies"; // movie- / tv-
+  return "movie"; // movie-
 }
 
 /** Item-ийн id prefix → эх сурвалжийн нэр (DetailPanel-ийн rating badge) */

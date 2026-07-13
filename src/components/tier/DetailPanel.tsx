@@ -11,6 +11,7 @@ import {
   User,
   BookOpen,
   Globe,
+  Layers,
   type LucideIcon,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +23,7 @@ import { sourceOfItemId, type MediaItem } from "@/lib/types";
 const TYPE_INFO: Record<string, { label: string; Icon: LucideIcon }> = {
   movie: { label: "Кино", Icon: Film },
   tv: { label: "Сериал", Icon: Tv },
+  season: { label: "Улирал", Icon: Layers },
   anime: { label: "Аниме", Icon: Sparkles },
   manga: { label: "Манга", Icon: BookText },
   character: { label: "Дүр", Icon: User },
