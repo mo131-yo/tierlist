@@ -20,16 +20,18 @@ import {
   horizontalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import Link from "next/link";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
 import { toPng } from "html-to-image";
 import { toast } from "sonner";
 import {
   ArrowLeft,
   Download,
-  Link2,
   Loader2,
   Plus,
   Check,
   CloudUpload,
+  Share2,
 } from "lucide-react";
 import { nanoid } from "nanoid";
 import { Button } from "@/components/ui/button";
@@ -41,7 +43,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { copyText } from "@/lib/clipboard";
+import { ShareMenu } from "@/components/ShareMenu";
 import { TierRow } from "./TierRow";
 import { SearchTray } from "./SearchTray";
 import { DetailPanel } from "./DetailPanel";
@@ -68,18 +70,87 @@ function UnrankedTray({
   items,
   selectedId,
   onSelect,
+  onUploaded,
 }: {
   itemIds: string[];
   items: Record<string, MediaItem>;
   selectedId: string | null;
   onSelect: (item: MediaItem) => void;
+  onUploaded: (item: MediaItem) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `container:${TRAY_ID}` });
+  const [fileOver, setFileOver] = useState(false);
+  const [uploading, setUploading] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function uploadFiles(files: FileList | File[]) {
+    const list = Array.from(files).filter((f) => f.type.startsWith("image/"));
+    if (list.length === 0) return;
+    setUploading((n) => n + list.length);
+    for (const file of list) {
+      try {
+        const fd = new FormData();
+        fd.append("file", file);
+        const res = await fetch("/api/upload", { method: "POST", body: fd });
+        const json = (await res.json()) as { item?: MediaItem; error?: string };
+        if (!res.ok || !json.item) throw new Error(json.error ?? "Upload амжилтгүй");
+        onUploaded(json.item);
+      } catch (err) {
+        toast.error((err as Error).message);
+      } finally {
+        setUploading((n) => n - 1);
+      }
+    }
+  }
+
   return (
-    <div className="rounded-xl border border-dashed border-white/10 bg-card/30">
-      <p className="px-3 pt-2 text-xs font-medium uppercase tracking-wider text-muted-foreground/60">
-        Эрэмбэлээгүй
-      </p>
+    <div
+      className={cn(
+        "rounded-xl border border-dashed transition-colors",
+        fileOver
+          ? "border-primary/60 bg-primary/10"
+          : "border-white/10 bg-card/30",
+      )}
+      onDragOver={(e) => {
+        // OS-оос файл чирч ирэх үед (dnd-kit pointer ашигладаг тул мөргөлдөхгүй)
+        if (e.dataTransfer.types.includes("Files")) {
+          e.preventDefault();
+          setFileOver(true);
+        }
+      }}
+      onDragLeave={() => setFileOver(false)}
+      onDrop={(e) => {
+        if (e.dataTransfer.files?.length) {
+          e.preventDefault();
+          setFileOver(false);
+          uploadFiles(e.dataTransfer.files);
+        }
+      }}
+    >
+      <div className="flex items-center justify-between px-3 pt-2">
+        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground/60">
+          Эрэмбэлээгүй
+        </p>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 gap-1 px-2 text-xs text-muted-foreground"
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <Plus className="h-3 w-3" /> Зураг нэмэх
+        </Button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/gif"
+          multiple
+          hidden
+          onChange={(e) => {
+            if (e.target.files) uploadFiles(e.target.files);
+            e.target.value = "";
+          }}
+        />
+      </div>
       <div
         ref={setNodeRef}
         className={cn(
@@ -100,9 +171,19 @@ function UnrankedTray({
             ) : null,
           )}
         </SortableContext>
-        {itemIds.length === 0 && (
-          <p className="px-2 text-xs text-muted-foreground/40">
-            Түр хадгалах зай — poster-оо энд ч хаяж болно
+        {Array.from({ length: uploading }).map((_, i) => (
+          <div
+            key={`up-${i}`}
+            className="flex shrink-0 animate-pulse items-center justify-center rounded-md bg-white/5"
+            style={{ width: 72, height: POSTER_H }}
+          >
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          </div>
+        ))}
+        {itemIds.length === 0 && uploading === 0 && (
+          <p className="px-2 text-xs text-muted-foreground/50">
+            Өөрийн зургаа энд чирж тавих эсвэл «Зураг нэмэх» дарж оруулна —
+            хайлтын poster-уудыг ч энд түр хадгалж болно
           </p>
         )}
       </div>
@@ -133,6 +214,26 @@ export function TierBoard({
   );
 
   const boardRef = useRef<HTMLDivElement>(null);
+  const pageRef = useRef<HTMLDivElement>(null);
+
+  // Мөрүүд анх нээхэд stagger орж ирнэ (нэг удаа); clearProps — dnd-kit-ийн
+  // transform-уудтай зөрчилдөхгүйн тулд дуусмагц inline style-ээ цэвэрлэнэ
+  useGSAP(
+    () => {
+      const mm = gsap.matchMedia();
+      mm.add("(prefers-reduced-motion: no-preference)", () => {
+        gsap.from(".tier-row", {
+          y: 24,
+          opacity: 0,
+          stagger: 0.06,
+          duration: 0.5,
+          ease: "power3.out",
+          clearProps: "all",
+        });
+      });
+    },
+    { scope: pageRef },
+  );
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -420,7 +521,7 @@ export function TierBoard({
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-4 p-4 lg:p-6">
+    <div ref={pageRef} className="flex flex-1 flex-col gap-4 p-4 lg:p-6">
       {/* Header */}
       <div className="flex flex-wrap items-center gap-3">
         <Button
@@ -451,17 +552,16 @@ export function TierBoard({
             <span className="text-red-400">Хадгалж чадсангүй</span>
           )}
         </span>
-        <Button
-          variant="ghost"
-          onClick={async () => {
-            const ok = await copyText(`${window.location.origin}/t/${list.id}`);
-            if (ok) toast.success("Линк хуулагдлаа");
-            else toast.error("Хуулж чадсангүй");
-          }}
-        >
-          <Link2 className="h-4 w-4" />
-          Хуваалцах
-        </Button>
+        <ShareMenu
+          url={`/t/${list.id}`}
+          title={title}
+          trigger={
+            <Button variant="ghost">
+              <Share2 className="h-4 w-4" />
+              Хуваалцах
+            </Button>
+          }
+        />
         <Button onClick={exportPng} disabled={exporting} variant="secondary">
           {exporting ? (
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -511,6 +611,11 @@ export function TierBoard({
               items={items}
               selectedId={selected?.id ?? null}
               onSelect={setSelected}
+              onUploaded={(item) => {
+                setItems((m) => ({ ...m, [item.id]: item }));
+                setData((d) => ({ ...d, tray: [...d.tray, item.id] }));
+                setSelected(item);
+              }}
             />
 
             <SearchTray

@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Star,
@@ -12,6 +13,7 @@ import {
   BookOpen,
   Globe,
   Layers,
+  ImageIcon,
   type LucideIcon,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -29,9 +31,11 @@ const TYPE_INFO: Record<string, { label: string; Icon: LucideIcon }> = {
   character: { label: "Дүр", Icon: User },
   book: { label: "Ном", Icon: BookOpen },
   wiki: { label: "Wikipedia", Icon: Globe },
+  custom: { label: "Өөрийн зураг", Icon: ImageIcon },
 };
 
 export function DetailPanel({ item }: { item: MediaItem | null }) {
+  const heroWrap = useRef<HTMLDivElement>(null);
   const typeInfo = item
     ? (TYPE_INFO[item.mediaType] ?? { label: item.mediaType, Icon: Globe })
     : null;
@@ -66,25 +70,44 @@ export function DetailPanel({ item }: { item: MediaItem | null }) {
               />
             )}
 
-            {/* Hero зураг: backdrop (original) эсвэл poster fallback */}
-            <div className="relative z-10 aspect-video w-full shrink-0 overflow-hidden">
+            {/* Hero зураг: backdrop (original) эсвэл poster fallback —
+                Ken Burns drift (img) + mouse parallax (wrapper) */}
+            <div
+              className="relative z-10 aspect-video w-full shrink-0 overflow-hidden"
+              onMouseMove={(e) => {
+                const el = heroWrap.current;
+                if (!el) return;
+                const r = e.currentTarget.getBoundingClientRect();
+                const x = ((e.clientX - r.left) / r.width - 0.5) * 14;
+                const y = ((e.clientY - r.top) / r.height - 0.5) * 10;
+                el.style.transform = `translate(${x}px, ${y}px) scale(1.06)`;
+              }}
+              onMouseLeave={() => {
+                if (heroWrap.current) heroWrap.current.style.transform = "";
+              }}
+            >
               {heroUrl && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={heroUrl}
-                  alt={item.title}
-                  className={
-                    item.backdropPath
-                      ? "h-full w-full object-cover"
-                      : "h-full w-full object-contain py-2"
-                  }
-                  style={{
-                    maskImage:
-                      "linear-gradient(to bottom, black 62%, transparent 100%)",
-                    WebkitMaskImage:
-                      "linear-gradient(to bottom, black 62%, transparent 100%)",
-                  }}
-                />
+                <div
+                  ref={heroWrap}
+                  className="h-full w-full transition-transform duration-500 ease-out"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={heroUrl}
+                    alt={item.title}
+                    className={
+                      item.backdropPath
+                        ? "ken-burns h-full w-full object-cover"
+                        : "h-full w-full object-contain py-2"
+                    }
+                    style={{
+                      maskImage:
+                        "linear-gradient(to bottom, black 62%, transparent 100%)",
+                      WebkitMaskImage:
+                        "linear-gradient(to bottom, black 62%, transparent 100%)",
+                    }}
+                  />
+                </div>
               )}
             </div>
 
@@ -124,14 +147,19 @@ export function DetailPanel({ item }: { item: MediaItem | null }) {
               {/* Genre section бүхэлдээ зөвхөн genre байгаа үед (wiki/дүр/ихэнх номд байхгүй) */}
               {item.genres.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
-                  {item.genres.map((g) => (
-                    <Badge
+                  {item.genres.map((g, i) => (
+                    <span
                       key={g}
-                      variant="secondary"
-                      className="border-white/10 bg-white/10 backdrop-blur"
+                      className="pop-in inline-block"
+                      style={{ animationDelay: `${120 + i * 45}ms` }}
                     >
-                      {g}
-                    </Badge>
+                      <Badge
+                        variant="secondary"
+                        className="border-white/10 bg-white/10 backdrop-blur"
+                      >
+                        {g}
+                      </Badge>
+                    </span>
                   ))}
                 </div>
               )}

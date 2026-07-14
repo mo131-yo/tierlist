@@ -1,4 +1,4 @@
-import { inArray, eq, desc } from "drizzle-orm";
+import { inArray, eq, desc, isNotNull } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from ".";
 import { mediaItems, searchCache, tierLists, type MediaItemRow } from "./schema";
@@ -137,6 +137,17 @@ async function upsertMediaItems(items: NormalizedMedia[], now: number) {
         },
       });
   }
+}
+
+/** Нүүрний marquee-д: хамгийн алдартай poster-ууд */
+export async function getPopularPosters(limit = 30): Promise<string[]> {
+  const rows = await db
+    .select({ posterPath: mediaItems.posterPath })
+    .from(mediaItems)
+    .where(isNotNull(mediaItems.posterPath))
+    .orderBy(desc(mediaItems.popularity))
+    .limit(limit);
+  return rows.map((r) => r.posterPath!).filter(Boolean);
 }
 
 export async function getMediaByIds(ids: string[]): Promise<MediaItemDto[]> {

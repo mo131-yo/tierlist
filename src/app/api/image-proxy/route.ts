@@ -1,14 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
+import { supabaseHost } from "@/lib/supabase";
 
 // PNG export-д зориулсан proxy: гадаад зургууд cross-origin тул canvas-д шууд
 // зурвал taint хийгддэг. Энэ route серверээс татаж same-origin болгож өгнө.
 // Зөвхөн мэдэгдэж буй эх сурвалжуудын image host-уудыг зөвшөөрнө (SSRF хамгаалалт).
-const ALLOWED_HOSTS = new Set([
-  "image.tmdb.org", // TMDB
-  "s4.anilist.co", // AniList cover/character зургууд
-  "covers.openlibrary.org", // Open Library номын cover
-  "upload.wikimedia.org", // Wikipedia thumbnail
-]);
+const ALLOWED_HOSTS = new Set(
+  [
+    "image.tmdb.org", // TMDB
+    "s4.anilist.co", // AniList cover/character зургууд
+    "covers.openlibrary.org", // Open Library номын cover
+    "upload.wikimedia.org", // Wikipedia thumbnail
+    supabaseHost(), // хэрэглэгчийн upload хийсэн зургууд (custom-images bucket)
+  ].filter((h): h is string => Boolean(h)),
+);
 
 export async function GET(req: NextRequest) {
   const url = req.nextUrl.searchParams.get("url");

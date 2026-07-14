@@ -1,10 +1,18 @@
-import { listTierLists, getMediaByIds, type TierListData } from "@/db/queries";
+import {
+  listTierLists,
+  getMediaByIds,
+  getPopularPosters,
+  type TierListData,
+} from "@/db/queries";
 import { HomeClient, type HomeListItem } from "@/components/home/HomeClient";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const lists = await listTierLists();
+  const [lists, marqueePosters] = await Promise.all([
+    listTierLists(),
+    getPopularPosters(30),
+  ]);
 
   const homeLists: HomeListItem[] = await Promise.all(
     lists.map(async (l) => {
@@ -27,5 +35,5 @@ export default async function Home() {
     }),
   );
 
-  return <HomeClient lists={homeLists} />;
+  return <HomeClient lists={homeLists} marqueePosters={marqueePosters} />;
 }

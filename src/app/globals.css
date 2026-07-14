@@ -183,3 +183,84 @@
 .ambient-glow {
   animation: cinePulse 7s ease-in-out infinite;
 }
+
+/* ---------- CineTier design system v2: cinema-amber accent ---------- */
+
+/* ФОНТ ЗАСВАР: @theme-ийн --font-sans нь var(--font-sans) гэж өөрийгөө заадаг
+   боловч хэн ч утга өгдөггүй байсан тул бүх текст Times (serif) болж уначихдаг
+   байв. Geist (next/font-ийн variable) руу энд бодитоор холбоно. */
+:root {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, "Segoe UI",
+    sans-serif;
+}
+
+.dark {
+  /* Ганц accent — алтлаг кино-amber; товч, идэвхтэй таб, glow бүгд үүгээр нэгдэнэ */
+  --primary: oklch(0.82 0.14 80);
+  --primary-foreground: oklch(0.2 0.04 80);
+  --ring: oklch(0.82 0.14 80 / 0.5);
+}
+
+/* Film grain — амьд кино texture (маш бүдэг, харилцаанд саадгүй) */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0.05;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+}
+
+/* Хайлтын үр дүн / chip-үүдийн stagger pop-in (CSS — re-render-т тэсвэртэй) */
+@keyframes popIn {
+  from { opacity: 0; transform: scale(0.88) translateY(6px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.pop-in {
+  animation: popIn 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* DetailPanel-ийн backdrop Ken Burns drift */
+@keyframes kenBurns {
+  from { transform: scale(1) translateY(0); }
+  to { transform: scale(1.09) translateY(-1.5%); }
+}
+.ken-burns {
+  animation: kenBurns 22s ease-in-out infinite alternate;
+}
+
+/* Нүүрний poster marquee */
+.marquee-mask {
+  mask-image: linear-gradient(to right, transparent, black 12%, black 88%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 12%, black 88%, transparent);
+}
+
+/* Card-ын cursor дагадаг glow (--mx/--my-г JS тавина) */
+.glow-card {
+  position: relative;
+}
+.glow-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s;
+  background: radial-gradient(
+    420px circle at var(--mx, 50%) var(--my, 50%),
+    oklch(0.82 0.14 80 / 0.12),
+    transparent 55%
+  );
+  z-index: 1;
+}
+.glow-card:hover::before {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pop-in, .ken-burns, .ambient-glow {
+    animation: none !important;
+  }
+}

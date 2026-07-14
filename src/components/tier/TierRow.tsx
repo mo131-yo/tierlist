@@ -35,7 +35,7 @@ export function TierRow({
   const { setNodeRef, isOver } = useDroppable({ id: `container:${row.id}` });
 
   return (
-    <div className="flex overflow-hidden rounded-xl border border-white/5 bg-card/60">
+    <div className="tier-row flex overflow-hidden rounded-xl border border-white/5 bg-card/60">
       {/* Label — шууд дарахад нэр + өнгө засах dialog нээгдэнэ */}
       <div
         className="group/label relative flex w-20 shrink-0 cursor-pointer items-center justify-center px-1"

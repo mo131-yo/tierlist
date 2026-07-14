@@ -51,6 +51,8 @@ export type Category = (typeof CATEGORIES)[number];
 
 /** Item-ийн id prefix → category (сервер TTL + client аль алинд) */
 export function categoryOfItemId(id: string): Category {
+  // custom- (өөрийн upload) item searchCache-д хэзээ ч ордоггүй тул
+  // TTL-д нөлөөгүй; default movie гэж үзнэ
   if (id.startsWith("tv-")) return "tv";
   if (id.startsWith("season-")) return "season";
   if (id.startsWith("al-a-")) return "anime";

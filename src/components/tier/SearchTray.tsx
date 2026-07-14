@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { motion } from "framer-motion";
 import { Search, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -159,13 +160,20 @@ export function SearchTray({
             type="button"
             onClick={() => handleCatChange(t.cat)}
             className={cn(
-              "rounded-full px-3 py-1 text-xs font-medium transition-colors",
+              "relative rounded-full px-3 py-1 text-xs font-medium transition-colors",
               cat === t.cat
-                ? "bg-primary text-primary-foreground"
+                ? "text-primary-foreground"
                 : "bg-white/5 text-muted-foreground hover:bg-white/10 hover:text-foreground",
             )}
           >
-            {t.label}
+            {cat === t.cat && (
+              <motion.span
+                layoutId="cat-tab-pill"
+                className="absolute inset-0 rounded-full bg-primary"
+                transition={{ type: "spring", bounce: 0.25, duration: 0.5 }}
+              />
+            )}
+            <span className="relative z-10">{t.label}</span>
           </button>
         ))}
       </div>
@@ -206,10 +214,11 @@ export function SearchTray({
         ) : results.length > 0 ? (
           <>
             {(expanded ? results : results.slice(0, VISIBLE_LIMIT)).map(
-              (item) => (
+              (item, i) => (
                 <div
                   key={item.id}
-                  className="flex w-[72px] shrink-0 flex-col gap-0.5"
+                  className="pop-in flex w-[72px] shrink-0 flex-col gap-0.5"
+                  style={{ animationDelay: `${Math.min(i, 16) * 30}ms` }}
                 >
                   <SearchPoster
                     item={item}
