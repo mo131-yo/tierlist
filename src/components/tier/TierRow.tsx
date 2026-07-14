@@ -49,13 +49,17 @@ export function TierRow({
         >
           {row.label}
         </span>
-        <Pencil className="pointer-events-none absolute bottom-1 left-1 h-3 w-3 text-black/0 transition-colors group-hover/label:text-black/50" />
+        <Pencil
+          data-noexport
+          className="pointer-events-none absolute bottom-1 left-1 h-3 w-3 text-black/0 transition-colors group-hover/label:text-black/50"
+        />
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
               <Button
                 variant="ghost"
                 size="icon"
+                data-noexport
                 className="absolute right-0.5 top-0.5 h-6 w-6 text-black/50 hover:bg-black/10 hover:text-black/80"
                 onClick={(e) => e.stopPropagation()}
               />

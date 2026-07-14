@@ -1,7 +1,31 @@
 // TMDB API client (server-only) + genre constant.
 // Genre жагсаалт TMDB дээр өөрчлөгддөггүй тул API дуудалт хэмнэж статик хадгалав.
 
-const TMDB_BASE = process.env.TMDB_BASE_URL ?? "https://api.themoviedb.org/3";
+import { allTokensExact } from "@/lib/relevance";
+
+// .env-ийн утга буруу/дутуу байсан ч ажиллах хамгаалалт:
+// зөв домэйнтэй үед л env-ийн base URL-ийг хэрэглэнэ
+const envBase = process.env.TMDB_BASE_URL?.trim();
+const TMDB_BASE = envBase?.includes("api.themoviedb.org")
+  ? envBase
+  : "https://api.themoviedb.org/3";
+
+// Bearer JWT ('.'-тэй урт токен) эсвэл v3 api_key-ийн аль байгааг нь ашиглана
+function tmdbAuth(): { header?: string; apiKey?: string } {
+  const candidates = [
+    process.env.TMDB_API_TOKEN,
+    process.env.NEXT_API_TOKEN,
+  ].map((s) => s?.trim());
+  for (const c of candidates) {
+    if (c && c.includes(".")) return { header: `Bearer ${c}` };
+  }
+  const key = (
+    process.env.TMDB_API_KEY ??
+    process.env.NEXT_PUBLIC_TMDB_API_KEY ??
+    process.env.TMDB_API_TOKEN
+  )?.trim();
+  return key ? { apiKey: key } : {};
+}
 
 export const GENRES: Record<number, string> = {
   28: "Action",
@@ -64,9 +88,13 @@ export interface NormalizedMedia {
 }
 
 async function tmdbGet(path: string): Promise<Response> {
-  return fetch(`${TMDB_BASE}${path}`, {
+  const auth = tmdbAuth();
+  const url = auth.apiKey
+    ? `${TMDB_BASE}${path}${path.includes("?") ? "&" : "?"}api_key=${auth.apiKey}`
+    : `${TMDB_BASE}${path}`;
+  return fetch(url, {
     headers: {
-      Authorization: `Bearer ${process.env.TMDB_API_TOKEN}`,
+      ...(auth.header ? { Authorization: auth.header } : {}),
       accept: "application/json",
     },
   });
@@ -189,16 +217,70 @@ async function tmdbSearchPages(
   return pages.flatMap((p) => p.results);
 }
 
-export async function searchTmdbMovies(
+/**
+ * Утгачилсан (франчайз/студи) хайлт: "marvel", "dc", "ghibli" гэх мэт query
+ * студийн нэртэй яг таарвал тухайн компанийн БҮХ бүтээлийг popularity-аар татна.
+ * Guard: query-ийн бүх үг компанийн нэрний үгсэд ЯГ байх ёстой
+ * ("car" ≠ "Carolco" — санамсаргүй идэвхжихгүй).
+ */
+async function tmdbCompanyDiscover(
+  endpoint: "movie" | "tv",
   query: string,
 ): Promise<NormalizedMedia[]> {
-  const results = await tmdbSearchPages("movie", query);
-  return results
+  const res = await tmdbGet(
+    `/search/company?query=${encodeURIComponent(query)}&page=1`,
+  );
+  if (!res.ok) return [];
+  const json = (await res.json()) as {
+    results: { id: number; name: string }[];
+  };
+  const companies = json.results
+    .filter((c) => allTokensExact(query, c.name))
+    .slice(0, 3);
+  if (companies.length === 0) return [];
+
+  const ids = companies.map((c) => c.id).join("|"); // OR холбоос
+  const pages = await Promise.all(
+    [1, 2].map(async (page) => {
+      const r = await tmdbGet(
+        `/discover/${endpoint}?with_companies=${ids}&sort_by=popularity.desc&include_adult=false&language=en-US&page=${page}`,
+      );
+      return r.ok
+        ? ((await r.json()) as { results: TmdbSearchResult[] })
+        : { results: [] };
+    }),
+  );
+  return pages
+    .flatMap((p) => p.results)
     .filter((r) => r.poster_path)
-    .map((r) => mapTmdbResult(r, "movie"));
+    .map((r) => mapTmdbResult(r, endpoint));
 }
 
-export async function searchTmdbTv(query: string): Promise<NormalizedMedia[]> {
-  const results = await tmdbSearchPages("tv", query);
-  return results.filter((r) => r.poster_path).map((r) => mapTmdbResult(r, "tv"));
+async function searchTmdbWithCompanies(
+  endpoint: "movie" | "tv",
+  query: string,
+): Promise<NormalizedMedia[]> {
+  const [titleRes, companyRes] = await Promise.allSettled([
+    tmdbSearchPages(endpoint, query),
+    tmdbCompanyDiscover(endpoint, query),
+  ]);
+  const byTitle =
+    titleRes.status === "fulfilled"
+      ? titleRes.value
+          .filter((r) => r.poster_path)
+          .map((r) => mapTmdbResult(r, endpoint))
+      : [];
+  const byCompany = companyRes.status === "fulfilled" ? companyRes.value : [];
+
+  // Нэрээр таарсан нь эхэндээ, франчайзын бусад бүтээл ард нь (давхардал хасна)
+  const seen = new Set(byTitle.map((i) => i.id));
+  return [...byTitle, ...byCompany.filter((i) => !seen.has(i.id))];
+}
+
+export function searchTmdbMovies(query: string): Promise<NormalizedMedia[]> {
+  return searchTmdbWithCompanies("movie", query);
+}
+
+export function searchTmdbTv(query: string): Promise<NormalizedMedia[]> {
+  return searchTmdbWithCompanies("tv", query);
 }

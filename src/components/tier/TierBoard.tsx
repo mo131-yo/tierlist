@@ -329,13 +329,18 @@ export function TierBoard({
       wrapper.style.cssText = `position:fixed;left:-100000px;top:0;z-index:-1;width:${EXPORT_WIDTH}px;`;
 
       // Export-ийн бүрэн frame: гарчиг + board + брэнд тэмдэг
+      // Export-д хэрэггүй UI элементүүдийг (3 цэгийн цэс, hover icon) хасна
+      clone.querySelectorAll("[data-noexport]").forEach((el) => el.remove());
+
       const exportRoot = document.createElement("div");
-      exportRoot.style.cssText = `width:${EXPORT_WIDTH}px;padding:24px;background:#111118;`;
+      // Системийн фонт — html-to-image webfont embed найдваргүй тул
+      // бүх текст (tier label, гарчиг) тод sans-serif-ээр баталгаатай гарна
+      exportRoot.style.cssText = `width:${EXPORT_WIDTH}px;padding:24px;background:#111118;font-family:'Segoe UI',Arial,sans-serif;`;
 
       const header = document.createElement("div");
       header.textContent = title;
       header.style.cssText =
-        "color:#fff;font-size:30px;font-weight:800;padding:4px 8px 16px;font-family:sans-serif;";
+        "color:#fff;font-size:30px;font-weight:800;padding:4px 8px 16px;";
 
       const brand = document.createElement("div");
       brand.textContent = "CineTier";
@@ -398,6 +403,7 @@ export function TierBoard({
       const dataUrl = await toPng(exportRoot, {
         backgroundColor: "#111118",
         pixelRatio: ratio,
+        skipFonts: true, // системийн фонт ашигладаг тул webfont embed алгасна (хурдан + найдвартай)
       });
       const a = document.createElement("a");
       a.href = dataUrl;

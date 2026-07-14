@@ -1,6 +1,7 @@
 // Open Library (key-гүй). Cover-гүй номыг ХАСАХГҮЙ — posterPath=null үлдээхэд
 // PosterCard-ын текстэн fallback tile автоматаар харуулна (ховор ном алга болохгүй).
 import type { NormalizedMedia } from "@/lib/tmdb";
+import { scoreMatch, rankScored } from "@/lib/relevance";
 
 interface OlDoc {
   key: string; // "/works/OL123W"
@@ -21,9 +22,17 @@ export async function searchOpenLibrary(
   if (!res.ok) throw new Error(`Open Library failed: ${res.status}`);
   const json = (await res.json()) as { docs: OlDoc[] };
 
-  return json.docs.map((d): NormalizedMedia => {
-    const workId = d.key.split("/").pop() ?? d.key;
-    return {
+  return rankScored(
+    json.docs.map((d) => ({
+      item: mapDoc(d),
+      score: scoreMatch(query, d.title, d.author_name?.[0]),
+    })),
+  );
+}
+
+function mapDoc(d: OlDoc): NormalizedMedia {
+  const workId = d.key.split("/").pop() ?? d.key;
+  return {
       id: `book-${workId}`,
       tmdbId: 0,
       mediaType: "book",
@@ -38,6 +47,5 @@ export async function searchOpenLibrary(
       year: d.first_publish_year ? String(d.first_publish_year) : null,
       rating: d.ratings_average ? d.ratings_average * 2 : 0, // 0-5 → 0-10
       popularity: d.ratings_count ?? 0,
-    };
-  });
+  };
 }

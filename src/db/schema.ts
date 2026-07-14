@@ -1,12 +1,18 @@
-import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import {
+  pgTable,
+  text,
+  integer,
+  bigint,
+  real,
+} from "drizzle-orm/pg-core";
 
-// Phase 2 (Supabase): энэ файлыг drizzle-orm/pg-core руу хөрвүүлэхэд л хангалттай —
-// бүх query src/db/queries.ts дотор төвлөрсөн тул route-ууд өөрчлөгдөхгүй.
+// Supabase Postgres (Phase 2). Timestamp-ууд Date.now() миллисекунд тул
+// 32-бит integer-т багтахгүй — bigint (mode: number) ашиглана.
 
-export const mediaItems = sqliteTable("media_items", {
-  id: text("id").primaryKey(), // "movie-123" | "tv-456"
+export const mediaItems = pgTable("media_items", {
+  id: text("id").primaryKey(), // "movie-123" | "tv-456" | "al-a-1" | "book-…" | "wiki-…"
   tmdbId: integer("tmdb_id").notNull(),
-  mediaType: text("media_type").notNull(), // movie | tv
+  mediaType: text("media_type").notNull(),
   title: text("title").notNull(),
   subtitle: text("subtitle"), // дүрийн харьяа бүтээл гэх мэт; ихэнх төрөлд null
   posterPath: text("poster_path"), // TMDB path эсвэл бусад эх сурвалжийн бүтэн URL
@@ -16,25 +22,25 @@ export const mediaItems = sqliteTable("media_items", {
   year: text("year"),
   rating: real("rating").notNull().default(0),
   popularity: real("popularity").notNull().default(0),
-  refreshedAt: integer("refreshed_at").notNull(), // ms — 7 хоногийн TTL шалгалтад
+  refreshedAt: bigint("refreshed_at", { mode: "number" }).notNull(), // ms — category TTL шалгалтад
 });
 
-export const searchCache = sqliteTable("search_cache", {
-  query: text("query").primaryKey(), // normalize: lowercase + trim
+export const searchCache = pgTable("search_cache", {
+  query: text("query").primaryKey(), // "{cat}:{normalized query}"
   itemIds: text("item_ids").notNull(), // JSON array, эрэмбэтэй
-  createdAt: integer("created_at").notNull(), // ms
+  createdAt: bigint("created_at", { mode: "number" }).notNull(), // ms
 });
 
 // data нь бүтэн JSON blob: {rows:[{id,label,color,itemIds:[]}], tray:[itemId]}
-// Autosave бүрд бүтэн blob дахин бичигдэнэ — Phase 1-ийн хэмжээнд асуудалгүй.
-// Phase 2-т шаардлагатай бол tierRows/tierItems хүснэгт болгож normalize хийнэ;
+// Autosave бүрд бүтэн blob дахин бичигдэнэ — одоогийн хэмжээнд асуудалгүй.
+// Шаардлагатай бол tierRows/tierItems хүснэгт болгож normalize хийж болно;
 // тиймээс blob-ийн бүтцийг (rows массив + itemIds) тогтвортой байлгана.
-export const tierLists = sqliteTable("tier_lists", {
+export const tierLists = pgTable("tier_lists", {
   id: text("id").primaryKey(),
   title: text("title").notNull().default("Шинэ Tier List"),
   data: text("data").notNull(),
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at").notNull(),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
 });
 
 export type MediaItemRow = typeof mediaItems.$inferSelect;

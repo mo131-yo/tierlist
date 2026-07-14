@@ -1,5 +1,6 @@
 // AniList GraphQL (key-гүй нийтийн API, ~30-90 req/мин rate limit-тэй)
 import type { NormalizedMedia } from "@/lib/tmdb";
+import { scoreMatch, allTokensExact, rankScored } from "@/lib/relevance";
 
 const ANILIST_URL = "https://graphql.anilist.co";
 
@@ -41,6 +42,7 @@ async function anilistFetch(query: string, variables: Record<string, unknown>) {
 
 interface AlMedia {
   id: number;
+  type?: "ANIME" | "MANGA";
   title: { romaji: string | null; english: string | null };
   coverImage: { extraLarge: string | null; large: string | null };
   bannerImage: string | null;
@@ -53,6 +55,7 @@ interface AlMedia {
 
 const MEDIA_FIELDS = `
   id
+  type
   title { romaji english }
   coverImage { extraLarge large }
   bannerImage
@@ -80,6 +83,7 @@ function mapMedia(m: AlMedia, kind: "anime" | "manga"): NormalizedMedia {
   };
 }
 
+/** Нэрээр хайж, relevance-аар эрэмбэлээд хамааралгүй "сүүл"-ийг хаяна */
 async function searchAnilistMedia(
   query: string,
   type: "ANIME" | "MANGA",
@@ -94,17 +98,81 @@ async function searchAnilistMedia(
     }`;
   const json = await anilistFetch(gql, { search: query });
   const data = json.data as { Page: { media: AlMedia[] } };
-  return data.Page.media
-    .map((m) => mapMedia(m, type === "ANIME" ? "anime" : "manga"))
-    .filter((m) => m.posterPath);
+  const kind = type === "ANIME" ? "anime" : "manga";
+  // Fuzzy хайлтын хамааралгүй үр дүнг (ж: "spider man" → Haikyu) хасна:
+  // score-г англи + ромажи нэр хоёулан дээр тооцно
+  return rankScored(
+    data.Page.media
+      .filter((m) => m.coverImage.extraLarge ?? m.coverImage.large)
+      .map((m) => ({
+        item: mapMedia(m, kind),
+        score: scoreMatch(query, m.title.romaji, m.title.english),
+      })),
+    true,
+  );
 }
 
-export function searchAnilistAnime(query: string) {
-  return searchAnilistMedia(query, "ANIME");
+/**
+ * Студийн хайлт (утгачилсан): "ghibli" → Studio Ghibli-ийн бүх бүтээл
+ * popularity дарааллаар. Guard: query-ийн бүх үг студийн нэрэнд яг байх ёстой.
+ */
+async function searchAnilistStudioMedia(
+  query: string,
+  kind: "anime" | "manga",
+): Promise<NormalizedMedia[]> {
+  const gql = `
+    query ($search: String) {
+      Studio(search: $search) {
+        name
+        media(sort: POPULARITY_DESC, perPage: 50, isMain: true) {
+          nodes { ${MEDIA_FIELDS} }
+        }
+      }
+    }`;
+  let json;
+  try {
+    json = await anilistFetch(gql, { search: query });
+  } catch (err) {
+    if (err instanceof RateLimitError) throw err;
+    return []; // Studio олдоогүй үед AniList заримдаа error буцаадаг
+  }
+  const studio = (json.data as {
+    Studio: { name: string; media: { nodes: AlMedia[] } } | null;
+  }).Studio;
+  if (!studio || !allTokensExact(query, studio.name)) return [];
+  const wantType = kind === "anime" ? "ANIME" : "MANGA";
+  return studio.media.nodes
+    .filter((m) => m.type === wantType)
+    .filter((m) => m.coverImage.extraLarge ?? m.coverImage.large)
+    .map((m) => mapMedia(m, kind));
+}
+
+/** Аниме таб: нэрийн хайлт + студийн франчайз хайлт зэрэг */
+export async function searchAnilistAnime(
+  query: string,
+): Promise<NormalizedMedia[]> {
+  const [byTitle, byStudio] = await Promise.allSettled([
+    searchAnilistMedia(query, "ANIME"),
+    searchAnilistStudioMedia(query, "anime"),
+  ]);
+  if (byTitle.status === "rejected" && byTitle.reason instanceof RateLimitError)
+    throw byTitle.reason;
+  const title = byTitle.status === "fulfilled" ? byTitle.value : [];
+  const studio = byStudio.status === "fulfilled" ? byStudio.value : [];
+  const seen = new Set(title.map((i) => i.id));
+  return [...title, ...studio.filter((i) => !seen.has(i.id))];
 }
 
 export function searchAnilistManga(query: string) {
   return searchAnilistMedia(query, "MANGA");
+}
+
+/** «Бүгд» табд зориулсан хөнгөн хувилбарууд (rate limit хэмнэнэ) */
+export function searchAnilistAnimeLight(query: string) {
+  return searchAnilistMedia(query, "ANIME", "", 30);
+}
+export function searchAnilistMangaLight(query: string) {
+  return searchAnilistMedia(query, "MANGA", "", 30);
 }
 
 /**
@@ -114,12 +182,7 @@ export function searchAnilistManga(query: string) {
  * Зөвхөн цуврал хэлбэрийг (TV, TV_SHORT, ONA) авна — кино/OVA хасагдана.
  */
 export function searchAnilistTvSeasons(query: string) {
-  return searchAnilistMedia(
-    query,
-    "ANIME",
-    ", format_in: [TV, TV_SHORT, ONA]",
-    25,
-  );
+  return searchAnilistMedia(query, "ANIME", ", format_in: [TV, TV_SHORT, ONA]", 25);
 }
 
 interface AlCharacter {
@@ -128,11 +191,28 @@ interface AlCharacter {
   image: { large: string | null };
   description: string | null;
   favourites: number | null;
-  media: { nodes: { title: { romaji: string | null; english: string | null } }[] };
+  media?: { nodes: { title: { romaji: string | null; english: string | null } }[] };
 }
 
-/** Аниме/мангагийн дүрүүд — subtitle нь харьяалагдах гол бүтээл */
-export async function searchAnilistCharacters(
+function mapCharacter(c: AlCharacter, subtitle: string | null): NormalizedMedia {
+  return {
+    id: `al-c-${c.id}`,
+    tmdbId: c.id,
+    mediaType: "character",
+    title: c.name.full ?? "Unknown",
+    subtitle,
+    posterPath: c.image.large,
+    backdropPath: null,
+    overview: stripHtml(c.description),
+    genres: [],
+    year: null,
+    rating: 0,
+    popularity: c.favourites ?? 0,
+  };
+}
+
+/** Нэрээр нь дүр хайх (хөнгөн хувилбар — «Бүгд» таб мөн ашиглана) */
+export async function searchAnilistCharactersLight(
   query: string,
 ): Promise<NormalizedMedia[]> {
   const gql = `
@@ -153,24 +233,97 @@ export async function searchAnilistCharacters(
   const json = await anilistFetch(gql, { search: query });
   const chars = (json.data as { Page: { characters: AlCharacter[] } }).Page
     .characters;
+  return rankScored(
+    chars
+      .filter((c) => c.image.large)
+      .map((c) => {
+        const origin = c.media?.nodes[0]?.title;
+        const subtitle = origin ? (origin.english ?? origin.romaji) : null;
+        return {
+          item: mapCharacter(c, subtitle),
+          score: scoreMatch(query, c.name.full, subtitle),
+        };
+      }),
+    true,
+  );
+}
 
-  return chars
-    .map((c): NormalizedMedia => {
-      const origin = c.media.nodes[0]?.title;
-      return {
-        id: `al-c-${c.id}`,
-        tmdbId: c.id,
-        mediaType: "character",
-        title: c.name.full ?? "Unknown",
-        subtitle: origin ? (origin.english ?? origin.romaji) : null,
-        posterPath: c.image.large,
-        backdropPath: null,
-        overview: stripHtml(c.description),
-        genres: [],
-        year: null,
-        rating: 0,
-        popularity: c.favourites ?? 0,
-      };
-    })
-    .filter((m) => m.posterPath);
+const ROSTER_PAGES = 6; // 6 × 25 = 150 дүр — нэг GraphQL request-ээр
+
+/**
+ * Аниме/мангагийн НЭРЭЭР хайхад тухайн бүтээлийн БҮХ дүрийг (хамгийн
+ * алдартайгаас үл танигдах хүртэл, favourites дарааллаар) гаргана.
+ * Guard: query нь бүтээлийн нэртэй яг таарсан үед л идэвхжинэ
+ * ("levi" → "Levius"-ийн roster санамсаргүй гарахгүй).
+ */
+async function searchCharacterRoster(
+  query: string,
+): Promise<NormalizedMedia[]> {
+  const pageAliases = Array.from(
+    { length: ROSTER_PAGES },
+    (_, i) => `
+      c${i + 1}: characters(page: ${i + 1}, perPage: 25, sort: FAVOURITES_DESC) {
+        nodes { id name { full } image { large } description favourites }
+      }`,
+  ).join("\n");
+  const gql = `
+    query ($search: String) {
+      Media(search: $search, sort: SEARCH_MATCH) {
+        title { romaji english }
+        ${pageAliases}
+      }
+    }`;
+  let json;
+  try {
+    json = await anilistFetch(gql, { search: query });
+  } catch (err) {
+    if (err instanceof RateLimitError) throw err;
+    return [];
+  }
+  const media = (json.data as Record<string, unknown>).Media as
+    | ({ title: { romaji: string | null; english: string | null } } & Record<
+        string,
+        { nodes: AlCharacter[] }
+      >)
+    | null;
+  if (!media) return [];
+
+  const romaji = media.title.romaji ?? "";
+  const english = media.title.english ?? "";
+  const exact =
+    scoreMatch(query, romaji, english) === 100 ||
+    (english && allTokensExact(query, english)) ||
+    (romaji && allTokensExact(query, romaji));
+  if (!exact) return [];
+
+  const subtitle = english || romaji || null;
+  const seen = new Set<number>();
+  const out: NormalizedMedia[] = [];
+  for (let i = 1; i <= ROSTER_PAGES; i++) {
+    for (const c of media[`c${i}`]?.nodes ?? []) {
+      if (seen.has(c.id) || !c.image.large) continue;
+      seen.add(c.id);
+      out.push(mapCharacter(c, subtitle));
+    }
+  }
+  return out;
+}
+
+/** Дүр таб: нэрийн хайлт + бүтээлийн нэрээр бүх дүрийн roster зэрэг */
+export async function searchAnilistCharacters(
+  query: string,
+): Promise<NormalizedMedia[]> {
+  const [direct, roster] = await Promise.allSettled([
+    searchAnilistCharactersLight(query),
+    searchCharacterRoster(query),
+  ]);
+  if (direct.status === "rejected" && direct.reason instanceof RateLimitError)
+    throw direct.reason;
+  const d = direct.status === "fulfilled" ? direct.value : [];
+  const r = roster.status === "fulfilled" ? roster.value : [];
+  if (r.length === 0) return d;
+  // Бүтээлийн нэр яг таарсан → roster-ийг түрүүлж (алдартай → танигдаагүй),
+  // нэрээрээ таарсан бусад дүрийг ард нь
+  const seen = new Set(r.map((i) => i.id));
+  return [...r, ...d.filter((i) => !seen.has(i.id))];
 }

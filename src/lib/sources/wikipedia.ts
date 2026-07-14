@@ -2,6 +2,7 @@
 // Зураг = page thumbnail (600px хязгаартай — poster хэмжээнд хангалттай,
 // DetailPanel-ийн том дэлгэцэд бүдэгдүү байж болохыг хүлээн зөвшөөрсөн, plan-д тэмдэглэсэн).
 import type { NormalizedMedia } from "@/lib/tmdb";
+import { scoreMatch, rankScored } from "@/lib/relevance";
 
 interface WikiPage {
   pageid: number;
@@ -38,23 +39,30 @@ export async function searchWikipedia(
   };
 
   const pages = Object.values(json.query?.pages ?? {});
-  return pages
-    .sort((a, b) => a.index - b.index) // хайлтын relevance эрэмбэ
-    .filter((p) => p.thumbnail?.source) // зураггүй хуудсыг шүүнэ
-    .map(
-      (p): NormalizedMedia => ({
-        id: `wiki-${p.pageid}`,
-        tmdbId: p.pageid,
-        mediaType: "wiki",
-        title: p.title,
-        subtitle: p.description ?? null,
-        posterPath: p.thumbnail!.source,
-        backdropPath: null,
-        overview: p.extract?.slice(0, 600) ?? "",
-        genres: [],
-        year: null,
-        rating: 0,
-        popularity: 0,
-      }),
-    );
+  // Wikipedia full-text хайлт хамааралгүй хуудас өгдөг (ж: "car" →
+  // "Central African Republic" — товчлолоор таардаг) тул гарчгийн
+  // relevance-аар эрэмбэлж, оноогүйг хасна
+  return rankScored(
+    pages
+      .sort((a, b) => a.index - b.index)
+      .filter((p) => p.thumbnail?.source) // зураггүй хуудсыг шүүнэ
+      .map((p) => ({
+        item: {
+          id: `wiki-${p.pageid}`,
+          tmdbId: p.pageid,
+          mediaType: "wiki",
+          title: p.title,
+          subtitle: p.description ?? null,
+          posterPath: p.thumbnail!.source,
+          backdropPath: null,
+          overview: p.extract?.slice(0, 600) ?? "",
+          genres: [],
+          year: null,
+          rating: 0,
+          popularity: 0,
+        } as NormalizedMedia,
+        score: scoreMatch(query, p.title),
+      })),
+    true,
+  );
 }

@@ -1,13 +1,15 @@
-import { drizzle } from "drizzle-orm/libsql";
-import { createClient } from "@libsql/client";
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
 import * as schema from "./schema";
 
-// Phase 2 (Supabase): drizzle-orm/node-postgres + SUPABASE_DB_URL болгож солино.
+// Supabase transaction pooler (порт 6543) prepared statement дэмждэггүй тул
+// prepare: false заавал хэрэгтэй. Serverless дээр холболт цөөн байлгана.
 const globalForDb = globalThis as unknown as { db?: ReturnType<typeof makeDb> };
 
 function makeDb() {
-  const client = createClient({
-    url: process.env.DATABASE_URL ?? "file:./local.db",
+  const client = postgres(process.env.DATABASE_URL!, {
+    prepare: false,
+    max: 5,
   });
   return drizzle(client, { schema });
 }

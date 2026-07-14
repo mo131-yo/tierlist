@@ -9,6 +9,9 @@ import {
   searchAnilistManga,
   searchAnilistCharacters,
   searchAnilistTvSeasons,
+  searchAnilistAnimeLight,
+  searchAnilistMangaLight,
+  searchAnilistCharactersLight,
 } from "./anilist";
 import { searchOpenLibrary } from "./openlibrary";
 import { searchWikipedia } from "./wikipedia";
@@ -56,12 +59,14 @@ async function searchSeasons(query: string): Promise<NormalizedMedia[]> {
  * Нэг source унасан ч (ж: AniList 429) бусад нь хэвээр гарна.
  */
 async function searchAll(query: string): Promise<NormalizedMedia[]> {
+  // AniList-ийн хөнгөн хувилбаруудыг ашиглана (studio/roster-гүй) —
+  // нэг «Бүгд» хайлт AniList-руу 3 л request явуулж rate limit хэмнэнэ
   const settled = await Promise.allSettled([
     searchTmdbMovies(query),
     searchTmdbTv(query),
-    searchAnilistAnime(query),
-    searchAnilistManga(query),
-    searchAnilistCharacters(query),
+    searchAnilistAnimeLight(query),
+    searchAnilistMangaLight(query),
+    searchAnilistCharactersLight(query),
     searchOpenLibrary(query),
     searchWikipedia(query),
   ]);
