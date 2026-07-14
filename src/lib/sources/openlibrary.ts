@@ -16,8 +16,9 @@ interface OlDoc {
 
 export async function searchOpenLibrary(
   query: string,
+  limit = 40,
 ): Promise<NormalizedMedia[]> {
-  const url = `https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=40&fields=key,title,author_name,first_publish_year,cover_i,ratings_average,ratings_count,subject`;
+  const url = `https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=${limit}&fields=key,title,author_name,first_publish_year,cover_i,ratings_average,ratings_count,subject`;
   const res = await fetch(url, { headers: { Accept: "application/json" } });
   if (!res.ok) throw new Error(`Open Library failed: ${res.status}`);
   const json = (await res.json()) as { docs: OlDoc[] };

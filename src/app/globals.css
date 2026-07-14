@@ -264,3 +264,44 @@ body::after {
     animation: none !important;
   }
 }
+
+/* ---------- v3 ---------- */
+
+/* Хайлт явж байх үеийн indeterminate progress bar */
+@keyframes progressSlide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+.progress-bar {
+  position: relative;
+  overflow: hidden;
+}
+.progress-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 30%;
+  background: linear-gradient(90deg, transparent, oklch(0.82 0.14 80), transparent);
+  animation: progressSlide 1s ease-in-out infinite;
+}
+
+/* Category табын мөрийн захын fade */
+.fade-x {
+  mask-image: linear-gradient(to right, transparent, black 4%, black 96%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 4%, black 96%, transparent);
+}
+
+/* CineTier логоны цагаан→amber урсдаг өнгөний долгион (үсэг бүр delay-тэй) */
+@keyframes logoWave {
+  0%, 100% { color: #fff; }
+  50% { color: oklch(0.83 0.15 80); }
+}
+.logo-wave {
+  animation: logoWave 3.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .logo-wave, .progress-bar::after {
+    animation: none !important;
+  }
+}

@@ -10,6 +10,12 @@ function makeDb() {
   const client = postgres(process.env.DATABASE_URL!, {
     prepare: false,
     max: 5,
+    // Supabase pooler идэвхгүй холболтыг таслахад postgres.js мэдэлгүй
+    // үхсэн socket дээр query хүлээгээд гацдаг — idle холболтоо өөрсдөө
+    // хааж, насжилт хязгаарлаж, connect-ийг богино timeout-той болгоно
+    idle_timeout: 20,
+    max_lifetime: 60 * 5,
+    connect_timeout: 10,
   });
   return drizzle(client, { schema });
 }

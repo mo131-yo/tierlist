@@ -67,6 +67,10 @@ export function SortablePoster({
   return (
     <div
       ref={setNodeRef}
+      data-item-id={item.id}
+      // dnd-kit-ийн aria-describedby id сервер/клиент дээр зөрдөг тул
+      // (танигдсан, хор хөнөөлгүй) hydration warning-ийг дарна
+      suppressHydrationWarning
       style={{
         transform: CSS.Transform.toString(transform),
         transition,

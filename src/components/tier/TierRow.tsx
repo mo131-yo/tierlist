@@ -38,8 +38,14 @@ export function TierRow({
     <div className="tier-row flex overflow-hidden rounded-xl border border-white/5 bg-card/60">
       {/* Label — шууд дарахад нэр + өнгө засах dialog нээгдэнэ */}
       <div
-        className="group/label relative flex w-20 shrink-0 cursor-pointer items-center justify-center px-1"
-        style={{ backgroundColor: row.color }}
+        className={cn(
+          "group/label relative flex w-20 shrink-0 cursor-pointer items-center justify-center px-1 shadow-[inset_0_0_24px_rgba(0,0,0,0.25)]",
+          isOver && "animate-pulse",
+        )}
+        style={{
+          // Flat биш — өнгөнийх нь gradient (бараанаас гэрэл рүү)
+          backgroundImage: `linear-gradient(135deg, color-mix(in oklab, ${row.color} 72%, black), ${row.color})`,
+        }}
         onClick={() => onEdit(row)}
         title="Дарж нэр, өнгө засах"
       >
@@ -85,8 +91,8 @@ export function TierRow({
       <div
         ref={setNodeRef}
         className={cn(
-          "flex flex-1 flex-wrap items-center gap-1.5 p-1.5 transition-colors",
-          isOver && "bg-primary/10",
+          "flex flex-1 flex-wrap items-center gap-1.5 p-1.5 transition-all",
+          isOver && "bg-primary/10 ring-1 ring-inset ring-primary/40",
         )}
         style={{ minHeight: POSTER_H + 12 }}
       >

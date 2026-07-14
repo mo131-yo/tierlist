@@ -1,4 +1,4 @@
-import { inArray, eq, desc, isNotNull } from "drizzle-orm";
+import { inArray, eq, desc, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from ".";
 import { mediaItems, searchCache, tierLists, type MediaItemRow } from "./schema";
@@ -139,15 +139,64 @@ async function upsertMediaItems(items: NormalizedMedia[], now: number) {
   }
 }
 
-/** Нүүрний marquee-д: хамгийн алдартай poster-ууд */
-export async function getPopularPosters(limit = 30): Promise<string[]> {
-  const rows = await db
-    .select({ posterPath: mediaItems.posterPath })
-    .from(mediaItems)
-    .where(isNotNull(mediaItems.posterPath))
-    .orderBy(desc(mediaItems.popularity))
-    .limit(limit);
-  return rows.map((r) => r.posterPath!).filter(Boolean);
+/**
+ * Нүүрний marquee: төрөл бүрээс (кино/сериал/аниме/манга/улирал) хамгийн
+ * алдартай item-уудыг БҮТЭН мэдээлэлтэй нь (нэр, тайлбар, genre...) авч
+ * interleave хийж буцаана — дарахад QuickView гарна.
+ */
+export async function getMarqueeItems(): Promise<MediaItemDto[]> {
+  // НЭГ query (window function) — parallel query burst нь Supabase transaction
+  // pooler дээр гацдаг байсан тул төрөл бүрийн топыг нэг statement-ээр авна
+  const rows = (await db.execute(sql`
+    select id, tmdb_id, media_type, title, subtitle, poster_path, backdrop_path,
+           overview, genres, year, rating, popularity, refreshed_at
+    from (
+      select m.*, row_number() over (partition by media_type order by popularity desc) as rn
+      from media_items m
+      where poster_path is not null
+        and media_type in ('movie','tv','anime','manga','season')
+    ) t
+    where rn <= 20
+    order by media_type, rn
+  `)) as unknown as Array<Record<string, unknown>>;
+
+  const caps: Record<string, number> = {
+    movie: 20,
+    tv: 20,
+    anime: 20,
+    manga: 15,
+    season: 10,
+  };
+  const byType = new Map<string, MediaItemDto[]>();
+  for (const r of rows) {
+    const type = r.media_type as string;
+    const list = byType.get(type) ?? [];
+    if (list.length >= (caps[type] ?? 0)) continue;
+    list.push({
+      id: r.id as string,
+      tmdbId: Number(r.tmdb_id),
+      mediaType: type,
+      title: r.title as string,
+      subtitle: (r.subtitle as string | null) ?? null,
+      posterPath: r.poster_path as string | null,
+      backdropPath: r.backdrop_path as string | null,
+      overview: (r.overview as string) ?? "",
+      genres: JSON.parse((r.genres as string) || "[]") as string[],
+      year: (r.year as string | null) ?? null,
+      rating: Number(r.rating) || 0,
+      popularity: Number(r.popularity) || 0,
+    });
+    byType.set(type, list);
+  }
+  const lists = [...byType.values()];
+  const out: MediaItemDto[] = [];
+  const max = Math.max(0, ...lists.map((l) => l.length));
+  for (let i = 0; i < max; i++) {
+    for (const l of lists) {
+      if (i < l.length) out.push(l[i]);
+    }
+  }
+  return out;
 }
 
 export async function getMediaByIds(ids: string[]): Promise<MediaItemDto[]> {

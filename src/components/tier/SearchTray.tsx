@@ -2,27 +2,45 @@
 
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Search, Loader2 } from "lucide-react";
+import {
+  Search,
+  Loader2,
+  LayoutGrid,
+  Film,
+  Tv,
+  Layers,
+  Sparkles,
+  BookText,
+  User,
+  BookOpen,
+  Globe,
+  type LucideIcon,
+} from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SearchPoster, POSTER_H } from "./PosterCard";
 import type { Category, MediaItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const DEBOUNCE_MS = 350;
+const DEBOUNCE_MS = 200;
 const CLIENT_CACHE_MAX = 50; // LRU: үүнээс хэтэрвэл хамгийн хуучин query устгагдана
 const VISIBLE_LIMIT = 10; // эхний харагдах үр дүн — илүү нь «see more»-ийн ард
 
-const CATEGORY_TABS: { cat: Category; label: string; placeholder: string }[] = [
-  { cat: "all", label: "🔎 Бүгд", placeholder: "Юу ч хай — кино, аниме, дүр, ном, хоол…" },
-  { cat: "movie", label: "🎬 Кино", placeholder: "Кино хайх… (ж: interstellar, oppenheimer)" },
-  { cat: "tv", label: "📺 Сериал", placeholder: "Сериал хайх… (ж: breaking bad, squid game)" },
-  { cat: "season", label: "🎞 Улирал", placeholder: "Сериалын нэрээр хайхад улирал бүр нь гарна… (ж: stranger things)" },
-  { cat: "anime", label: "🎌 Аниме", placeholder: "Аниме хайх… (ж: naruto, blue lock)" },
-  { cat: "manga", label: "📖 Манга", placeholder: "Манга хайх… (ж: berserk, one piece)" },
-  { cat: "character", label: "👤 Дүр", placeholder: "Аниме/мангагийн дүр хайх… (ж: levi, gojo)" },
-  { cat: "book", label: "📚 Ном", placeholder: "Ном хайх… (ж: harry potter, dune)" },
-  { cat: "wiki", label: "🌐 Бусад", placeholder: "Юу ч хай: хуушуур, ferrari, messi…" },
+const CATEGORY_TABS: {
+  cat: Category;
+  label: string;
+  Icon: LucideIcon;
+  placeholder: string;
+}[] = [
+  { cat: "all", label: "Бүгд", Icon: LayoutGrid, placeholder: "Юу ч хай — кино, аниме, дүр, ном, хоол…" },
+  { cat: "movie", label: "Кино", Icon: Film, placeholder: "Кино хайх… (ж: interstellar, oppenheimer)" },
+  { cat: "tv", label: "Сериал", Icon: Tv, placeholder: "Сериал хайх… (ж: breaking bad, squid game)" },
+  { cat: "season", label: "Улирал", Icon: Layers, placeholder: "Сериалын нэрээр хайхад улирал бүр нь гарна… (ж: stranger things)" },
+  { cat: "anime", label: "Аниме", Icon: Sparkles, placeholder: "Аниме хайх… (ж: naruto, blue lock)" },
+  { cat: "manga", label: "Манга", Icon: BookText, placeholder: "Манга хайх… (ж: berserk, one piece)" },
+  { cat: "character", label: "Дүр", Icon: User, placeholder: "Аниме/мангагийн дүр хайх… (ж: levi, gojo)" },
+  { cat: "book", label: "Ном", Icon: BookOpen, placeholder: "Ном хайх… (ж: harry potter, dune)" },
+  { cat: "wiki", label: "Бусад", Icon: Globe, placeholder: "Юу ч хай: хуушуур, ferrari, messi…" },
 ];
 
 // Эдгээр таб дээр poster доор subtitle гарна (холимог/ижил нэртэй үр дүнг ялгахад)
@@ -64,8 +82,8 @@ export function SearchTray({
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<MediaItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [rateLimited, setRateLimited] = useState(false);
-  const [expanded, setExpanded] = useState(false); // see-more дарсан эсэх
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestKey = useRef("");
@@ -139,6 +157,8 @@ export function SearchTray({
       return;
     }
 
+    // Хайлт явж байхад хуучин үр дүн харагдсаар байна (бүдгэрч) —
+    // хоосон дэлгэц гарахгүй тул хурдан мэдрэгдэнэ
     setLoading(true);
     timerRef.current = setTimeout(() => fetchQuery(activeCat, q), DEBOUNCE_MS);
   }
@@ -151,35 +171,37 @@ export function SearchTray({
   const activeTab = CATEGORY_TABS.find((t) => t.cat === cat)!;
 
   return (
-    <div className="glass rounded-xl p-3">
-      {/* Category tabs */}
-      <div className="mb-2 flex flex-wrap gap-1.5">
+    <div className="glass rounded-2xl p-3.5">
+      {/* Category segmented tabs */}
+      <div className="fade-x -mx-1 mb-3 flex gap-1 overflow-x-auto px-1 pb-1">
         {CATEGORY_TABS.map((t) => (
           <button
             key={t.cat}
             type="button"
             onClick={() => handleCatChange(t.cat)}
             className={cn(
-              "relative rounded-full px-3 py-1 text-xs font-medium transition-colors",
+              "relative flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors",
               cat === t.cat
                 ? "text-primary-foreground"
-                : "bg-white/5 text-muted-foreground hover:bg-white/10 hover:text-foreground",
+                : "bg-white/[0.04] text-muted-foreground hover:bg-white/10 hover:text-foreground",
             )}
           >
             {cat === t.cat && (
               <motion.span
                 layoutId="cat-tab-pill"
-                className="absolute inset-0 rounded-full bg-primary"
+                className="absolute inset-0 rounded-full bg-primary shadow-[0_0_18px_-4px_var(--primary)]"
                 transition={{ type: "spring", bounce: 0.25, duration: 0.5 }}
               />
             )}
+            <t.Icon className="relative z-10 h-3.5 w-3.5" />
             <span className="relative z-10">{t.label}</span>
           </button>
         ))}
       </div>
 
-      <div className="relative mb-2">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+      {/* Input */}
+      <div className="group relative mb-3">
+        <Search className="absolute left-3.5 top-1/2 h-4.5 w-4.5 -translate-y-1/2 text-muted-foreground transition-colors group-focus-within:text-primary" />
         <Input
           value={query}
           onChange={(e) => {
@@ -187,16 +209,25 @@ export function SearchTray({
             startSearch(cat, e.target.value);
           }}
           placeholder={activeTab.placeholder}
-          className="border-white/10 bg-black/30 pl-9"
+          className="h-11 rounded-xl border-white/10 bg-black/30 pl-10 text-[15px]"
         />
         {loading && (
-          <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+          <Loader2 className="absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-primary" />
         )}
       </div>
 
+      {/* Progress bar — хайлт явж байгааг илтгэнэ */}
+      <div className="relative -mt-2 mb-2 h-0.5 overflow-hidden rounded-full">
+        {loading && <div className="progress-bar absolute inset-0" />}
+      </div>
+
+      {/* Results */}
       <div
-        className="flex items-start gap-1.5 overflow-x-auto pb-1"
-        style={{ minHeight: POSTER_H + 8 }}
+        className={cn(
+          "flex items-start gap-2 overflow-x-auto pb-1 transition-opacity duration-300",
+          loading && results.length > 0 && "opacity-40",
+        )}
+        style={{ minHeight: POSTER_H + 34 }}
       >
         {rateLimited ? (
           <p className="px-2 py-4 text-sm text-amber-400/90">
@@ -204,12 +235,14 @@ export function SearchTray({
             уу
           </p>
         ) : loading && results.length === 0 ? (
-          Array.from({ length: 8 }).map((_, i) => (
-            <Skeleton
-              key={i}
-              className="shrink-0 rounded-md"
-              style={{ width: 72, height: POSTER_H }}
-            />
+          Array.from({ length: 9 }).map((_, i) => (
+            <div key={i} className="flex w-[72px] shrink-0 flex-col gap-1">
+              <Skeleton
+                className="rounded-md"
+                style={{ width: 72, height: POSTER_H }}
+              />
+              <Skeleton className="h-2.5 w-14 rounded" />
+            </div>
           ))
         ) : results.length > 0 ? (
           <>
@@ -217,8 +250,8 @@ export function SearchTray({
               (item, i) => (
                 <div
                   key={item.id}
-                  className="pop-in flex w-[72px] shrink-0 flex-col gap-0.5"
-                  style={{ animationDelay: `${Math.min(i, 16) * 30}ms` }}
+                  className="pop-in flex w-[72px] shrink-0 flex-col gap-1"
+                  style={{ animationDelay: `${Math.min(i, 16) * 25}ms` }}
                 >
                   <SearchPoster
                     item={item}
@@ -226,9 +259,16 @@ export function SearchTray({
                     selected={selectedId === item.id}
                     onSelect={onSelect}
                   />
+                  {/* Нэр байнга харагдана — юу болохыг hover хийлгүй мэднэ */}
+                  <span
+                    className="line-clamp-2 text-center text-[9.5px] leading-[1.25] text-foreground/70"
+                    title={item.title}
+                  >
+                    {item.title}
+                  </span>
                   {SUBTITLE_CATS.has(cat) && item.subtitle && (
                     <span
-                      className="truncate text-center text-[9px] leading-tight text-muted-foreground/70"
+                      className="truncate text-center text-[8.5px] leading-tight text-muted-foreground/60"
                       title={item.subtitle}
                     >
                       {item.subtitle}
@@ -241,7 +281,7 @@ export function SearchTray({
               <button
                 type="button"
                 onClick={() => setExpanded(true)}
-                className="glass flex shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-white/10 text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+                className="glass flex shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-white/10 text-muted-foreground transition-all hover:border-primary/50 hover:text-primary"
                 style={{ width: 72, height: POSTER_H }}
               >
                 <span className="text-lg font-bold">

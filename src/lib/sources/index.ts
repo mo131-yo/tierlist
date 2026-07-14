@@ -54,21 +54,35 @@ async function searchSeasons(query: string): Promise<NormalizedMedia[]> {
   ];
 }
 
+/** Удаан source нэг хайлтыг бүхэлд нь чирэхээс сэргийлнэ */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, rej) =>
+      setTimeout(() => rej(new Error("source timeout")), ms),
+    ),
+  ]);
+}
+
+const ALL_SOURCE_TIMEOUT_MS = 3000;
+
 /**
  * «Бүгд» таб: season-оос бусад бүх source-ийг зэрэг хайна.
- * Нэг source унасан ч (ж: AniList 429) бусад нь хэвээр гарна.
+ * Нэг source унасан/удаасан ч бусад нь хэвээр гарна — хариу нь хамгийн
+ * удаан source биш, timeout-ийн хязгаараар баригдана. (Timeout болсон
+ * source тухайн query-ийн кэшэнд орохгүй үлдэж болно — хурдны tradeoff.)
  */
 async function searchAll(query: string): Promise<NormalizedMedia[]> {
   // AniList-ийн хөнгөн хувилбаруудыг ашиглана (studio/roster-гүй) —
   // нэг «Бүгд» хайлт AniList-руу 3 л request явуулж rate limit хэмнэнэ
   const settled = await Promise.allSettled([
-    searchTmdbMovies(query),
-    searchTmdbTv(query),
-    searchAnilistAnimeLight(query),
-    searchAnilistMangaLight(query),
-    searchAnilistCharactersLight(query),
-    searchOpenLibrary(query),
-    searchWikipedia(query),
+    withTimeout(searchTmdbMovies(query), ALL_SOURCE_TIMEOUT_MS),
+    withTimeout(searchTmdbTv(query), ALL_SOURCE_TIMEOUT_MS),
+    withTimeout(searchAnilistAnimeLight(query), ALL_SOURCE_TIMEOUT_MS),
+    withTimeout(searchAnilistMangaLight(query), ALL_SOURCE_TIMEOUT_MS),
+    withTimeout(searchAnilistCharactersLight(query), ALL_SOURCE_TIMEOUT_MS),
+    withTimeout(searchOpenLibrary(query, 20), ALL_SOURCE_TIMEOUT_MS),
+    withTimeout(searchWikipedia(query, 20), ALL_SOURCE_TIMEOUT_MS),
   ]);
   const lists = settled.map((s) => (s.status === "fulfilled" ? s.value : []));
   return interleave(lists);

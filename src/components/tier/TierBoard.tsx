@@ -44,6 +44,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ShareMenu } from "@/components/ShareMenu";
+import { uploadImageFiles } from "@/lib/uploadImages";
 import { TierRow } from "./TierRow";
 import { SearchTray } from "./SearchTray";
 import { DetailPanel } from "./DetailPanel";
@@ -70,38 +71,19 @@ function UnrankedTray({
   items,
   selectedId,
   onSelect,
-  onUploaded,
+  uploading,
+  uploadFiles,
 }: {
   itemIds: string[];
   items: Record<string, MediaItem>;
   selectedId: string | null;
   onSelect: (item: MediaItem) => void;
-  onUploaded: (item: MediaItem) => void;
+  uploading: number;
+  uploadFiles: (files: FileList | File[]) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `container:${TRAY_ID}` });
   const [fileOver, setFileOver] = useState(false);
-  const [uploading, setUploading] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  async function uploadFiles(files: FileList | File[]) {
-    const list = Array.from(files).filter((f) => f.type.startsWith("image/"));
-    if (list.length === 0) return;
-    setUploading((n) => n + list.length);
-    for (const file of list) {
-      try {
-        const fd = new FormData();
-        fd.append("file", file);
-        const res = await fetch("/api/upload", { method: "POST", body: fd });
-        const json = (await res.json()) as { item?: MediaItem; error?: string };
-        if (!res.ok || !json.item) throw new Error(json.error ?? "Upload амжилтгүй");
-        onUploaded(json.item);
-      } catch (err) {
-        toast.error((err as Error).message);
-      } finally {
-        setUploading((n) => n - 1);
-      }
-    }
-  }
 
   return (
     <div
@@ -209,9 +191,41 @@ export function TierBoard({
   const [activeItem, setActiveItem] = useState<MediaItem | null>(null);
   const [editingRow, setEditingRow] = useState<TierRowData | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [exportPreview, setExportPreview] = useState<{
+    url: string;
+    w: number;
+    h: number;
+  } | null>(null);
+  const [uploading, setUploading] = useState(0);
+  const [pageFileOver, setPageFileOver] = useState(false);
+  const fileDragDepth = useRef(0);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">(
     "idle",
   );
+
+  // Хаана ч зураг тавьж болно: глобал drop + tray-ийн локал drop хоёул үүнийг дуудна
+  const handleUploadFiles = useCallback((files: FileList | File[]) => {
+    uploadImageFiles(
+      files,
+      (item) => {
+        setItems((m) => ({ ...m, [item.id]: item }));
+        setData((d) => ({ ...d, tray: [...d.tray, item.id] }));
+        setSelected(item);
+      },
+      (delta) => setUploading((n) => Math.max(0, n + delta)),
+    );
+  }, []);
+
+  /** Item тавигдмагц жижиг "pop" — амьд мэдрэмж */
+  function popDropped(itemId: string) {
+    requestAnimationFrame(() => {
+      gsap.fromTo(
+        `[data-item-id="${itemId}"]`,
+        { scale: 1.15 },
+        { scale: 1, duration: 0.35, ease: "back.out(2.5)", clearProps: "scale" },
+      );
+    });
+  }
 
   const boardRef = useRef<HTMLDivElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
@@ -367,6 +381,7 @@ export function TierBoard({
         toIds.splice(overIndex >= 0 ? overIndex : toIds.length, 0, itemId);
         return setIds(d, to, toIds);
       });
+      popDropped(itemId);
       return;
     }
 
@@ -379,6 +394,7 @@ export function TierBoard({
     if (oldIndex >= 0 && newIndex >= 0 && oldIndex !== newIndex) {
       setData((d) => setIds(d, container, arrayMove(getIds(d, container), oldIndex, newIndex)));
     }
+    popDropped(activeId);
   }
 
   // ---------- Мөр удирдах ----------
@@ -395,6 +411,16 @@ export function TierBoard({
         },
       ],
     }));
+    // Шинэ мөр доороос эргэн орж ирнэ
+    requestAnimationFrame(() => {
+      gsap.from(".tier-row:last-child", {
+        y: 22,
+        opacity: 0,
+        duration: 0.45,
+        ease: "power3.out",
+        clearProps: "all",
+      });
+    });
   }
 
   function deleteRow(rowId: string) {
@@ -506,11 +532,12 @@ export function TierBoard({
         pixelRatio: ratio,
         skipFonts: true, // системийн фонт ашигладаг тул webfont embed алгасна (хурдан + найдвартай)
       });
-      const a = document.createElement("a");
-      a.href = dataUrl;
-      a.download = `${title.replace(/[^\p{L}\p{N} _-]/gu, "").trim() || "tierlist"}.png`;
-      a.click();
-      toast.success("PNG татагдлаа");
+      // Шууд татахгүй — эхлээд preview modal-д харуулна
+      setExportPreview({
+        url: dataUrl,
+        w: EXPORT_WIDTH * ratio,
+        h: Math.round(exportHeight * ratio),
+      });
     } catch (err) {
       console.error(err);
       toast.error("Export амжилтгүй боллоо");
@@ -521,7 +548,45 @@ export function TierBoard({
   }
 
   return (
-    <div ref={pageRef} className="flex flex-1 flex-col gap-4 p-4 lg:p-6">
+    <div
+      ref={pageRef}
+      className="flex flex-1 flex-col gap-4 p-4 lg:p-6"
+      onDragEnter={(e) => {
+        if (e.dataTransfer?.types.includes("Files")) {
+          fileDragDepth.current++;
+          setPageFileOver(true);
+        }
+      }}
+      onDragOver={(e) => {
+        if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+      }}
+      onDragLeave={() => {
+        if (fileDragDepth.current > 0) {
+          fileDragDepth.current--;
+          if (fileDragDepth.current === 0) setPageFileOver(false);
+        }
+      }}
+      onDrop={(e) => {
+        if (e.dataTransfer?.files?.length) {
+          e.preventDefault();
+          fileDragDepth.current = 0;
+          setPageFileOver(false);
+          handleUploadFiles(e.dataTransfer.files);
+        }
+      }}
+    >
+      {/* Глобал файл-drop overlay: хаана ч зургаа тавьж болно */}
+      {pageFileOver && (
+        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-3 rounded-3xl border-2 border-dashed border-primary/70 bg-card/60 px-16 py-12">
+            <CloudUpload className="h-12 w-12 text-primary" />
+            <p className="text-lg font-semibold">Зургаа энд тавь</p>
+            <p className="text-sm text-muted-foreground">
+              «Эрэмбэлээгүй» хэсэгт нэмэгдэнэ
+            </p>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div className="flex flex-wrap items-center gap-3">
         <Button
@@ -568,7 +633,7 @@ export function TierBoard({
           ) : (
             <Download className="h-4 w-4" />
           )}
-          PNG
+          Download
         </Button>
       </div>
 
@@ -611,11 +676,8 @@ export function TierBoard({
               items={items}
               selectedId={selected?.id ?? null}
               onSelect={setSelected}
-              onUploaded={(item) => {
-                setItems((m) => ({ ...m, [item.id]: item }));
-                setData((d) => ({ ...d, tray: [...d.tray, item.id] }));
-                setSelected(item);
-              }}
+              uploading={uploading}
+              uploadFiles={handleUploadFiles}
             />
 
             <SearchTray
@@ -626,8 +688,8 @@ export function TierBoard({
             />
           </div>
 
-          {/* Баруун: detail panel */}
-          <div className="w-full shrink-0 lg:w-[380px] xl:w-[440px]">
+          {/* Баруун: detail panel — sticky тул доор хайж байхад ч сонголт харагдана */}
+          <div className="w-full shrink-0 lg:sticky lg:top-4 lg:w-[380px] lg:self-start xl:w-[440px]">
             <DetailPanel item={selected} />
           </div>
         </div>
@@ -636,6 +698,50 @@ export function TierBoard({
           {activeItem ? <PosterOverlay item={activeItem} /> : null}
         </DragOverlay>
       </DndContext>
+
+      {/* Download preview dialog — татахын өмнө ямар харагдахыг үзүүлнэ */}
+      <Dialog
+        open={!!exportPreview}
+        onOpenChange={(o) => !o && setExportPreview(null)}
+      >
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Татахын өмнөх урьдчилсан харагдац</DialogTitle>
+          </DialogHeader>
+          {exportPreview && (
+            <>
+              <div className="max-h-[65vh] overflow-auto rounded-lg border border-white/10">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={exportPreview.url}
+                  alt="Tier list preview"
+                  className="w-full"
+                />
+              </div>
+              <DialogFooter className="items-center gap-2">
+                <span className="mr-auto text-xs text-muted-foreground">
+                  {exportPreview.w}×{exportPreview.h}px PNG
+                </span>
+                <Button variant="ghost" onClick={() => setExportPreview(null)}>
+                  Болих
+                </Button>
+                <Button
+                  onClick={() => {
+                    const a = document.createElement("a");
+                    a.href = exportPreview.url;
+                    a.download = `${title.replace(/[^\p{L}\p{N} _-]/gu, "").trim() || "tierlist"}.png`;
+                    a.click();
+                    toast.success("Татагдлаа");
+                    setExportPreview(null);
+                  }}
+                >
+                  <Download className="h-4 w-4" /> Татах
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Мөр засах dialog */}
       <Dialog open={!!editingRow} onOpenChange={(o) => !o && setEditingRow(null)}>

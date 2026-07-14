@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { Plus, Trash2, Loader2, Clapperboard, Share2 } from "lucide-react";
@@ -17,6 +18,11 @@ import {
 } from "@/components/ui/dialog";
 import { getPosterUrl } from "@/lib/imageStore";
 import { ShareMenu } from "@/components/ShareMenu";
+import { QuickView } from "./QuickView";
+import type { MediaItem } from "@/lib/types";
+
+// Three.js dust — lazy, SSR-гүй (эхний render-ийг удаашруулахгүй)
+const HeroDust = dynamic(() => import("./HeroDust"), { ssr: false });
 
 gsap.registerPlugin(useGSAP);
 
@@ -28,54 +34,85 @@ export interface HomeListItem {
   posters: string[];
 }
 
-/** Дэвсгэрийн 2 эгнээ эсрэг чиглэлийн poster marquee (Ten Years Away маягийн texture) */
-function PosterMarquee({ posters }: { posters: string[] }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const rows = [posters.slice(0, 15), posters.slice(15, 30)];
+/** Marquee-гийн нэг эгнээ: hover-т зогсдог, poster дарахад QuickView гардаг */
+function MarqueeRow({
+  items,
+  index,
+  onQuick,
+}: {
+  items: MediaItem[];
+  index: number;
+  onQuick: (m: MediaItem) => void;
+}) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const tweenRef = useRef<gsap.core.Tween | null>(null);
 
-  useGSAP(
-    () => {
-      const mm = gsap.matchMedia();
-      mm.add("(prefers-reduced-motion: no-preference)", () => {
-        gsap.utils
-          .toArray<HTMLElement>(".marquee-track")
-          .forEach((track, i) => {
-            gsap.to(track, {
-              xPercent: i % 2 === 0 ? -50 : 50,
-              duration: 70 + i * 15,
-              ease: "none",
-              repeat: -1,
-            });
-          });
-      });
-    },
-    { scope: ref },
-  );
+  useGSAP(() => {
+    const mm = gsap.matchMedia();
+    mm.add("(prefers-reduced-motion: no-preference)", () => {
+      if (!trackRef.current) return;
+      // Сондгой эгнээ эсрэг чиглэлд, өөр хурдтай — амьд давхарга
+      tweenRef.current = gsap.fromTo(
+        trackRef.current,
+        { xPercent: index % 2 ? -50 : 0 },
+        {
+          xPercent: index % 2 ? 0 : -50,
+          duration: 55 + index * 13,
+          ease: "none",
+          repeat: -1,
+        },
+      );
+    });
+  }, []);
 
-  if (posters.length < 6) return null;
   return (
     <div
-      ref={ref}
-      aria-hidden
-      className="marquee-mask pointer-events-none absolute inset-x-0 top-0 z-0 flex h-72 flex-col justify-center gap-3 overflow-hidden opacity-25 blur-[1.5px]"
+      ref={trackRef}
+      className="flex w-max gap-3"
+      onMouseEnter={() =>
+        tweenRef.current && gsap.to(tweenRef.current, { timeScale: 0, duration: 0.5 })
+      }
+      onMouseLeave={() =>
+        tweenRef.current && gsap.to(tweenRef.current, { timeScale: 1, duration: 0.5 })
+      }
     >
-      {rows.map((row, i) => (
-        <div
-          key={i}
-          className={`marquee-track flex w-max gap-3 ${i % 2 === 1 ? "-translate-x-1/2" : ""}`}
+      {/* 2 давхар — үзүүр залгагдаж тасралтгүй гүйнэ */}
+      {[...items, ...items].map((m, j) => (
+        <button
+          key={`${m.id}-${j}`}
+          type="button"
+          onClick={() => onQuick(m)}
+          title={m.title}
+          className="group/mq relative shrink-0 overflow-hidden rounded-lg focus-visible:ring-2 focus-visible:ring-primary"
         >
-          {/* 2 давхар — үзүүр залгагдаж тасралтгүй гүйнэ */}
-          {[...row, ...row].map((p, j) => (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              key={j}
-              src={getPosterUrl(p, "w185")!}
-              alt=""
-              loading={j < 8 ? "eager" : "lazy"}
-              className="h-32 w-[86px] shrink-0 rounded-md object-cover"
-            />
-          ))}
-        </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={getPosterUrl(m.posterPath, "w185")!}
+            alt={m.title}
+            loading={j < 10 ? "eager" : "lazy"}
+            className="h-36 w-24 object-cover brightness-[.5] transition-all duration-300 group-hover/mq:scale-105 group-hover/mq:brightness-110"
+          />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** 3 эгнээ бүх төрлийн (кино/сериал/аниме/манга/улирал) interactive marquee */
+function PosterMarquee({
+  items,
+  onQuick,
+}: {
+  items: MediaItem[];
+  onQuick: (m: MediaItem) => void;
+}) {
+  if (items.length < 12) return null;
+  const per = Math.ceil(items.length / 3);
+  const rows = [items.slice(0, per), items.slice(per, per * 2), items.slice(per * 2)];
+  return (
+    <div className="marquee-mask absolute inset-x-0 top-0 z-0 flex h-[29rem] flex-col justify-between gap-3 overflow-hidden py-2 opacity-45 transition-opacity duration-500 hover:opacity-80">
+      {rows.map((row, i) => (
+        <MarqueeRow key={i} items={row} index={i} onQuick={onQuick} />
       ))}
     </div>
   );
@@ -83,14 +120,15 @@ function PosterMarquee({ posters }: { posters: string[] }) {
 
 export function HomeClient({
   lists,
-  marqueePosters,
+  marqueeItems,
 }: {
   lists: HomeListItem[];
-  marqueePosters: string[];
+  marqueeItems: MediaItem[];
 }) {
   const router = useRouter();
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<HomeListItem | null>(null);
+  const [quickItem, setQuickItem] = useState<MediaItem | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const magneticRef = useRef<HTMLDivElement>(null);
 
@@ -208,18 +246,21 @@ export function HomeClient({
       ref={rootRef}
       className="relative mx-auto w-full max-w-5xl flex-1 px-6 pb-16 pt-10"
     >
-      <PosterMarquee posters={marqueePosters} />
+      <PosterMarquee items={marqueeItems} onQuick={setQuickItem} />
 
       {/* Hero */}
-      <div className="relative z-10 mb-12 flex flex-col items-center pt-16 text-center">
+      <div className="pointer-events-none relative z-10 mb-14 flex flex-col items-center pt-24 text-center">
+        <HeroDust />
         <h1
           className="flex overflow-hidden text-6xl font-black tracking-tight sm:text-7xl"
           aria-label="CineTier"
         >
+          {/* Цагаан→amber урсдаг өнгөний долгион (үсэг бүр delay-тэй) */}
           {heroChars.map((c, i) => (
             <span
               key={i}
-              className={`hero-char inline-block ${i >= 4 ? "text-primary" : ""}`}
+              className="hero-char logo-wave inline-block"
+              style={{ animationDelay: `${-i * 0.18}s` }}
             >
               {c}
             </span>
@@ -229,7 +270,7 @@ export function HomeClient({
           Кино · аниме · дүр · ном · юу ч бай — хайгаад л чирээд л tier list-ээ
           хий.
         </p>
-        <div ref={magneticRef} className="hero-cta mt-7">
+        <div ref={magneticRef} className="hero-cta pointer-events-auto mt-7">
           <Button size="lg" onClick={createList} disabled={creating}>
             {creating ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -324,6 +365,8 @@ export function HomeClient({
           ))}
         </div>
       )}
+
+      <QuickView item={quickItem} onClose={() => setQuickItem(null)} />
 
       <Dialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)}>
         <DialogContent className="max-w-sm">

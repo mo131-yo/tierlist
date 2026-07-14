@@ -15,12 +15,13 @@ interface WikiPage {
 
 export async function searchWikipedia(
   query: string,
+  limit = 30,
 ): Promise<NormalizedMedia[]> {
   const params = new URLSearchParams({
     action: "query",
     generator: "search",
     gsrsearch: query,
-    gsrlimit: "30", // extracts exlimit нь 20 хүртэл тул сүүлийн 10 нь overview-гүй байж болно (DetailPanel нөхцөлт тул OK)
+    gsrlimit: String(limit), // extracts exlimit нь 20 хүртэл тул илүү нь overview-гүй байж болно (DetailPanel нөхцөлт тул OK)
     prop: "pageimages|description|extracts",
     piprop: "thumbnail",
     pithumbsize: "600",
