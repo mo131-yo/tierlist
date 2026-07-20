@@ -56,10 +56,13 @@ export function SortablePoster({
   item,
   selected,
   onSelect,
+  onPick,
 }: {
   item: MediaItem;
   selected: boolean;
   onSelect: (item: MediaItem) => void;
+  /** Дарахад tier сонгох popup нээнэ (чирэлт 6px threshold-оор ялгагдана) */
+  onPick?: (item: MediaItem, anchor: HTMLElement) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: item.id, data: { item } });
@@ -78,7 +81,10 @@ export function SortablePoster({
       }}
       {...attributes}
       {...listeners}
-      onClick={() => onSelect(item)}
+      onClick={(e) => {
+        onSelect(item);
+        onPick?.(item, e.currentTarget);
+      }}
       className="cursor-grab active:cursor-grabbing touch-none"
     >
       <PosterImage item={item} selected={selected} />
@@ -92,11 +98,13 @@ export function SearchPoster({
   onBoard,
   selected,
   onSelect,
+  onPick,
 }: {
   item: MediaItem;
   onBoard: boolean;
   selected: boolean;
   onSelect: (item: MediaItem) => void;
+  onPick?: (item: MediaItem, anchor: HTMLElement) => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `search:${item.id}`,
@@ -109,7 +117,10 @@ export function SearchPoster({
       ref={setNodeRef}
       {...attributes}
       {...listeners}
-      onClick={() => onSelect(item)}
+      onClick={(e) => {
+        onSelect(item);
+        if (!onBoard) onPick?.(item, e.currentTarget);
+      }}
       className={cn(
         "touch-none",
         onBoard ? "cursor-not-allowed opacity-35" : "cursor-grab active:cursor-grabbing",

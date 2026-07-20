@@ -3,11 +3,8 @@ import { nanoid } from "nanoid";
 import { db } from ".";
 import { mediaItems, searchCache, tierLists, type MediaItemRow } from "./schema";
 import type { NormalizedMedia } from "@/lib/tmdb";
-import {
-  searchSource,
-  categoryOfItemId,
-  type Category,
-} from "@/lib/sources";
+import { searchSource, browseSource, type Category } from "@/lib/sources";
+import type { BrowseCat, BrowseSort } from "@/lib/genres";
 import type { MediaItem as MediaItemDto, TierRowData, TierListData } from "@/lib/types";
 
 export type { MediaItemDto, TierRowData, TierListData };
@@ -44,86 +41,174 @@ function rowToDto(r: MediaItemRow): MediaItemDto {
   };
 }
 
+export type CacheStatus = "HIT" | "MISS" | "STALE";
+
+/** Кэшийн мөрөөс item-уудыг эх дарааллаар нь ачаална (бүгд олдвол) */
+async function loadCachedItems(ids: string[]): Promise<MediaItemDto[] | null> {
+  if (ids.length === 0) return [];
+  const rows = await db
+    .select()
+    .from(mediaItems)
+    .where(inArray(mediaItems.id, ids));
+  if (rows.length !== ids.length) return null;
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return ids.map((id) => byId.get(id)!).map(rowToDto);
+}
+
+/** MISS/refresh зам: эх сурвалжаас татаж media_items + search_cache-д бичнэ */
+async function fetchAndCacheSearch(
+  cat: Category,
+  query: string,
+  cacheKey: string,
+): Promise<MediaItemDto[]> {
+  const now = Date.now();
+  const results = await searchSource(cat, query);
+  await upsertMediaItems(results, now);
+  await writeSearchCache(cacheKey, results.map((r) => r.id), now);
+  return results;
+}
+
+async function writeSearchCache(cacheKey: string, itemIds: unknown, now: number) {
+  const json = JSON.stringify(itemIds);
+  await db
+    .insert(searchCache)
+    .values({ query: cacheKey, itemIds: json, createdAt: now })
+    .onConflictDoUpdate({
+      target: searchCache.query,
+      set: { itemIds: json, createdAt: now },
+    });
+}
+
 /**
- * Кэштэй хайлт: search_cache HIT + TTL шинэ бол гадаад API руу огт явахгүй.
- * TTL (category бүрд өөр) хэтэрсэн эсвэл MISS бол эх сурвалжаас татаж upsert хийнэ.
+ * Кэштэй хайлт (stale-while-revalidate): search_cache мөр байвал TTL хэтэрсэн
+ * ч ШУУД буцаана — хэтэрсэн бол cache="STALE" тул route `after()`-оор
+ * background refresh хийнэ. Жинхэнэ MISS л blocking гадаад API дуудна.
  * Cache key = `${cat}:${query}` — өөр category-ийн ижил query тусдаа кэшлэгдэнэ.
  */
 export async function cachedSearch(
   cat: Category,
   rawQuery: string,
-): Promise<{ items: MediaItemDto[]; cache: "HIT" | "MISS" }> {
+): Promise<{ items: MediaItemDto[]; cache: CacheStatus }> {
   const query = rawQuery.trim().toLowerCase();
   const cacheKey = `${cat}:${query}`;
-  const ttl = CACHE_TTL_MS[cat];
   const now = Date.now();
 
   const cached = await db.query.searchCache.findFirst({
     where: eq(searchCache.query, cacheKey),
   });
 
-  if (cached && now - cached.createdAt < ttl) {
+  if (cached) {
     const ids = JSON.parse(cached.itemIds) as string[];
-    if (ids.length === 0) return { items: [], cache: "HIT" };
-    const rows = await db
-      .select()
-      .from(mediaItems)
-      .where(inArray(mediaItems.id, ids));
-    const fresh = rows.every(
-      (r) => now - r.refreshedAt < CACHE_TTL_MS[categoryOfItemId(r.id)],
-    );
-    if (fresh && rows.length === ids.length) {
-      const byId = new Map(rows.map((r) => [r.id, r]));
-      return {
-        items: ids.map((id) => byId.get(id)!).filter(Boolean).map(rowToDto),
-        cache: "HIT",
-      };
+    const items = await loadCachedItems(ids);
+    if (items) {
+      const stale = now - cached.createdAt >= CACHE_TTL_MS[cat];
+      return { items, cache: stale ? "STALE" : "HIT" };
     }
   }
 
-  // MISS (эсвэл TTL хэтэрсэн) — эх сурвалжаас татаж upsert
-  const results = await searchSource(cat, query);
-  await upsertMediaItems(results, now);
-  await db
-    .insert(searchCache)
-    .values({
-      query: cacheKey,
-      itemIds: JSON.stringify(results.map((r) => r.id)),
-      createdAt: now,
-    })
-    .onConflictDoUpdate({
-      target: searchCache.query,
-      set: {
-        itemIds: JSON.stringify(results.map((r) => r.id)),
-        createdAt: now,
-      },
-    });
-
+  const results = await fetchAndCacheSearch(cat, query, cacheKey);
   return { items: results, cache: "MISS" };
 }
 
+// Нэг instance дотор ижил key-ийн зэрэгцээ background refresh-үүдийг нэгтгэнэ
+const inFlightRefresh = new Set<string>();
+
+/** STALE үед route-ийн after()-оос дуудагдана — хариуг хойшлуулахгүй */
+export async function refreshSearch(cat: Category, rawQuery: string) {
+  const query = rawQuery.trim().toLowerCase();
+  const cacheKey = `${cat}:${query}`;
+  if (inFlightRefresh.has(cacheKey)) return;
+  inFlightRefresh.add(cacheKey);
+  try {
+    await fetchAndCacheSearch(cat, query, cacheKey);
+    console.log(`[search] background refresh done: ${cacheKey}`);
+  } catch (err) {
+    console.error(`[search] background refresh failed: ${cacheKey}`, err);
+  } finally {
+    inFlightRefresh.delete(cacheKey);
+  }
+}
+
+// ---- Browse (хайлтгүй үзэх) — search_cache хүснэгтээ дахин ашиглана ----
+// browse: key-үүд {ids, hasMore} обьект хадгалдаг (зөвхөн эндээс уншигдана)
+
+const BROWSE_TTL_MS = 1 * DAY;
+
+function browseCacheKey(
+  cat: BrowseCat,
+  opts: { genreSlugs: string[]; sort: BrowseSort; page: number },
+): string {
+  return `browse:${cat}:${opts.sort}:${[...opts.genreSlugs].sort().join(",")}:${opts.page}`;
+}
+
+async function fetchAndCacheBrowse(
+  cat: BrowseCat,
+  opts: { genreSlugs: string[]; sort: BrowseSort; page: number },
+  cacheKey: string,
+): Promise<{ items: MediaItemDto[]; hasMore: boolean }> {
+  const now = Date.now();
+  const { items, hasMore } = await browseSource(cat, opts);
+  await upsertMediaItems(items, now);
+  await writeSearchCache(cacheKey, { ids: items.map((i) => i.id), hasMore }, now);
+  return { items, hasMore };
+}
+
+export async function cachedBrowse(
+  cat: BrowseCat,
+  opts: { genreSlugs: string[]; sort: BrowseSort; page: number },
+): Promise<{ items: MediaItemDto[]; hasMore: boolean; cache: CacheStatus }> {
+  const cacheKey = browseCacheKey(cat, opts);
+  const now = Date.now();
+
+  const cached = await db.query.searchCache.findFirst({
+    where: eq(searchCache.query, cacheKey),
+  });
+
+  if (cached) {
+    const val = JSON.parse(cached.itemIds) as { ids: string[]; hasMore: boolean };
+    const items = await loadCachedItems(val.ids);
+    if (items) {
+      const stale = now - cached.createdAt >= BROWSE_TTL_MS;
+      return { items, hasMore: val.hasMore, cache: stale ? "STALE" : "HIT" };
+    }
+  }
+
+  const { items, hasMore } = await fetchAndCacheBrowse(cat, opts, cacheKey);
+  return { items, hasMore, cache: "MISS" };
+}
+
+/** STALE үед browse route-ийн after()-оос дуудагдана */
+export async function refreshBrowse(
+  cat: BrowseCat,
+  opts: { genreSlugs: string[]; sort: BrowseSort; page: number },
+) {
+  const cacheKey = browseCacheKey(cat, opts);
+  if (inFlightRefresh.has(cacheKey)) return;
+  inFlightRefresh.add(cacheKey);
+  try {
+    await fetchAndCacheBrowse(cat, opts, cacheKey);
+    console.log(`[browse] background refresh done: ${cacheKey}`);
+  } catch (err) {
+    console.error(`[browse] background refresh failed: ${cacheKey}`, err);
+  } finally {
+    inFlightRefresh.delete(cacheKey);
+  }
+}
+
+const UPSERT_CHUNK = 100;
+
 async function upsertMediaItems(items: NormalizedMedia[], now: number) {
-  for (const item of items) {
+  // Нэг statement дотор ижил id хоёр удаа орвол Postgres
+  // "ON CONFLICT DO UPDATE command cannot affect row a second time" шиддэг
+  const deduped = [...new Map(items.map((i) => [i.id, i])).values()];
+  for (let i = 0; i < deduped.length; i += UPSERT_CHUNK) {
     await db
       .insert(mediaItems)
-      .values({
-        id: item.id,
-        tmdbId: item.tmdbId,
-        mediaType: item.mediaType,
-        title: item.title,
-        subtitle: item.subtitle,
-        posterPath: item.posterPath,
-        backdropPath: item.backdropPath,
-        overview: item.overview,
-        genres: JSON.stringify(item.genres),
-        year: item.year,
-        rating: item.rating,
-        popularity: item.popularity,
-        refreshedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: mediaItems.id,
-        set: {
+      .values(
+        deduped.slice(i, i + UPSERT_CHUNK).map((item) => ({
+          id: item.id,
+          tmdbId: item.tmdbId,
+          mediaType: item.mediaType,
           title: item.title,
           subtitle: item.subtitle,
           posterPath: item.posterPath,
@@ -134,6 +219,21 @@ async function upsertMediaItems(items: NormalizedMedia[], now: number) {
           rating: item.rating,
           popularity: item.popularity,
           refreshedAt: now,
+        })),
+      )
+      .onConflictDoUpdate({
+        target: mediaItems.id,
+        set: {
+          title: sql`excluded.title`,
+          subtitle: sql`excluded.subtitle`,
+          posterPath: sql`excluded.poster_path`,
+          backdropPath: sql`excluded.backdrop_path`,
+          overview: sql`excluded.overview`,
+          genres: sql`excluded.genres`,
+          year: sql`excluded.year`,
+          rating: sql`excluded.rating`,
+          popularity: sql`excluded.popularity`,
+          refreshedAt: sql`excluded.refreshed_at`,
         },
       });
   }
@@ -227,7 +327,11 @@ export async function createTierList(title?: string) {
   const row = {
     id: nanoid(10),
     title: title ?? "Шинэ Tier List",
-    data: JSON.stringify({ rows: DEFAULT_ROWS, tray: [] } satisfies TierListData),
+    data: JSON.stringify({
+      rows: DEFAULT_ROWS,
+      tray: [],
+      watchLater: [],
+    } satisfies TierListData),
     createdAt: now,
     updatedAt: now,
   };

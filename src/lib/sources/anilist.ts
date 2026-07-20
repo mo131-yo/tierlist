@@ -1,5 +1,6 @@
 // AniList GraphQL (key-гүй нийтийн API, ~30-90 req/мин rate limit-тэй)
 import type { NormalizedMedia } from "@/lib/tmdb";
+import type { BrowseSort } from "@/lib/genres";
 import { scoreMatch, allTokensExact, rankScored } from "@/lib/relevance";
 
 const ANILIST_URL = "https://graphql.anilist.co";
@@ -165,6 +166,49 @@ export async function searchAnilistAnime(
 
 export function searchAnilistManga(query: string) {
   return searchAnilistMedia(query, "MANGA");
+}
+
+const ANILIST_BROWSE_SORT: Record<BrowseSort, string> = {
+  popularity: "POPULARITY_DESC",
+  rating: "SCORE_DESC",
+  newest: "START_DATE_DESC",
+};
+
+/**
+ * Browse горим: хайлтгүйгээр genre + эрэмбээр хуудаслаж үзэх.
+ * genre_in: [] нь AniList дээр 0 үр дүн өгдөг тул хоосон үед undefined
+ * дамжуулна. newest дээр status_in шүүхгүй бол зөвхөн TBA/гараагүй
+ * бүртгэлүүд эхэнд гарна.
+ */
+export async function browseAnilist(
+  type: "ANIME" | "MANGA",
+  opts: { genres: string[]; sort: BrowseSort; page: number },
+): Promise<{ items: NormalizedMedia[]; hasMore: boolean }> {
+  const gql = `
+    query ($page: Int, $genres: [String], $sort: [MediaSort], $status: [MediaStatus]) {
+      Page(page: $page, perPage: 30) {
+        pageInfo { hasNextPage }
+        media(type: ${type}, genre_in: $genres, sort: $sort, status_in: $status, isAdult: false) {
+          ${MEDIA_FIELDS}
+        }
+      }
+    }`;
+  const json = await anilistFetch(gql, {
+    page: opts.page,
+    genres: opts.genres.length > 0 ? opts.genres : undefined,
+    sort: [ANILIST_BROWSE_SORT[opts.sort]],
+    status: opts.sort === "newest" ? ["RELEASING", "FINISHED"] : undefined,
+  });
+  const data = json.data as {
+    Page: { pageInfo: { hasNextPage: boolean }; media: AlMedia[] };
+  };
+  const kind = type === "ANIME" ? "anime" : "manga";
+  return {
+    items: data.Page.media
+      .filter((m) => m.coverImage.extraLarge ?? m.coverImage.large)
+      .map((m) => mapMedia(m, kind)),
+    hasMore: data.Page.pageInfo.hasNextPage,
+  };
 }
 
 /** «Бүгд» табд зориулсан хөнгөн хувилбарууд (rate limit хэмнэнэ) */

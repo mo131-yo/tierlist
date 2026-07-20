@@ -2,6 +2,7 @@ import {
   searchTmdbMovies,
   searchTmdbTv,
   searchTvSeasons,
+  discoverTmdb,
   type NormalizedMedia,
 } from "@/lib/tmdb";
 import {
@@ -12,10 +13,17 @@ import {
   searchAnilistAnimeLight,
   searchAnilistMangaLight,
   searchAnilistCharactersLight,
+  browseAnilist,
 } from "./anilist";
 import { searchOpenLibrary } from "./openlibrary";
 import { searchWikipedia } from "./wikipedia";
 import { CATEGORIES, type Category } from "@/lib/types";
+import {
+  BROWSE_CATS,
+  BROWSE_GENRES,
+  type BrowseCat,
+  type BrowseSort,
+} from "@/lib/genres";
 
 export { RateLimitError } from "./anilist";
 export { categoryOfItemId, sourceOfItemId, CATEGORIES } from "@/lib/types";
@@ -23,6 +31,37 @@ export type { Category };
 
 export function isCategory(v: string | null): v is Category {
   return !!v && (CATEGORIES as readonly string[]).includes(v);
+}
+
+export function isBrowseCategory(v: string | null): v is BrowseCat {
+  return !!v && (BROWSE_CATS as readonly string[]).includes(v);
+}
+
+/**
+ * Browse горим: хайлтгүйгээр тухайн category-ийн алдартай/шинэ контентыг
+ * genre-ээр шүүж хуудаслана. slug → TMDB id / AniList нэр энд хөрвөнө.
+ */
+export async function browseSource(
+  cat: BrowseCat,
+  opts: { genreSlugs: string[]; sort: BrowseSort; page: number },
+): Promise<{ items: NormalizedMedia[]; hasMore: boolean }> {
+  const defs = BROWSE_GENRES[cat].filter((g) => opts.genreSlugs.includes(g.slug));
+  switch (cat) {
+    case "movie":
+    case "tv":
+      return discoverTmdb(cat, {
+        genreIds: defs.map((g) => g.tmdbId!).filter(Boolean),
+        sort: opts.sort,
+        page: opts.page,
+      });
+    case "anime":
+    case "manga":
+      return browseAnilist(cat === "anime" ? "ANIME" : "MANGA", {
+        genres: defs.map((g) => g.anilist!).filter(Boolean),
+        sort: opts.sort,
+        page: opts.page,
+      });
+  }
 }
 
 /** Хэд хэдэн source-ийн үр дүнг ээлжлэн (round-robin) хольж нэгтгэнэ */

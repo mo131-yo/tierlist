@@ -22,6 +22,7 @@ export function TierRow({
   items,
   selectedId,
   onSelect,
+  onPick,
   onEdit,
   onDelete,
 }: {
@@ -29,6 +30,7 @@ export function TierRow({
   items: Record<string, MediaItem>;
   selectedId: string | null;
   onSelect: (item: MediaItem) => void;
+  onPick?: (item: MediaItem, anchor: HTMLElement) => void;
   onEdit: (row: TierRowData) => void;
   onDelete: (rowId: string) => void;
 }) {
@@ -109,6 +111,7 @@ export function TierRow({
                 item={item}
                 selected={selectedId === id}
                 onSelect={onSelect}
+                onPick={onPick}
               />
             );
           })}

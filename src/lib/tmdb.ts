@@ -2,6 +2,7 @@
 // Genre жагсаалт TMDB дээр өөрчлөгддөггүй тул API дуудалт хэмнэж статик хадгалав.
 
 import { allTokensExact } from "@/lib/relevance";
+import type { BrowseSort } from "@/lib/genres";
 
 // .env-ийн утга буруу/дутуу байсан ч ажиллах хамгаалалт:
 // зөв домэйнтэй үед л env-ийн base URL-ийг хэрэглэнэ
@@ -283,4 +284,50 @@ export function searchTmdbMovies(query: string): Promise<NormalizedMedia[]> {
 
 export function searchTmdbTv(query: string): Promise<NormalizedMedia[]> {
   return searchTmdbWithCompanies("tv", query);
+}
+
+/**
+ * Browse горим: хайлтгүйгээр genre + эрэмбээр discover.
+ * Guard-ууд чухал: rating дээр vote_count.gte байхгүй бол 1 хүн 10 өгсөн
+ * үл мэдэгдэх бүтээлүүд, newest дээр date.lte байхгүй бол гараагүй
+ * placeholder-ууд эхэнд гарна.
+ */
+export async function discoverTmdb(
+  endpoint: "movie" | "tv",
+  opts: { genreIds: number[]; sort: BrowseSort; page: number },
+): Promise<{ items: NormalizedMedia[]; hasMore: boolean }> {
+  const params = new URLSearchParams({
+    include_adult: "false",
+    language: "en-US",
+    page: String(opts.page),
+  });
+  if (opts.genreIds.length > 0)
+    params.set("with_genres", opts.genreIds.join(",")); // таслал = AND
+
+  const dateField =
+    endpoint === "movie" ? "primary_release_date" : "first_air_date";
+  if (opts.sort === "popularity") {
+    params.set("sort_by", "popularity.desc");
+  } else if (opts.sort === "rating") {
+    params.set("sort_by", "vote_average.desc");
+    params.set("vote_count.gte", endpoint === "movie" ? "200" : "50");
+  } else {
+    params.set("sort_by", `${dateField}.desc`);
+    params.set(`${dateField}.lte`, new Date().toISOString().slice(0, 10));
+    params.set("vote_count.gte", "10");
+  }
+
+  const res = await tmdbGet(`/discover/${endpoint}?${params.toString()}`);
+  if (!res.ok) throw new Error(`TMDB discover failed: ${res.status}`);
+  const json = (await res.json()) as {
+    page: number;
+    total_pages: number;
+    results: TmdbSearchResult[];
+  };
+  return {
+    items: json.results
+      .filter((r) => r.poster_path)
+      .map((r) => mapTmdbResult(r, endpoint)),
+    hasMore: json.page < json.total_pages,
+  };
 }

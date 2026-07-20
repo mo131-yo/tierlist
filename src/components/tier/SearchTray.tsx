@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Search,
@@ -14,17 +14,27 @@ import {
   User,
   BookOpen,
   Globe,
+  Flame,
+  Star,
+  CalendarClock,
   type LucideIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { SearchPoster, POSTER_H } from "./PosterCard";
+import { MediaGrid } from "./MediaGrid";
+import { POSTER_H } from "./PosterCard";
+import {
+  BROWSE_CATS,
+  BROWSE_GENRES,
+  matchesGenre,
+  type BrowseCat,
+  type BrowseSort,
+} from "@/lib/genres";
 import type { Category, MediaItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const DEBOUNCE_MS = 200;
+const DEBOUNCE_MS = 150;
 const CLIENT_CACHE_MAX = 50; // LRU: үүнээс хэтэрвэл хамгийн хуучин query устгагдана
-const VISIBLE_LIMIT = 10; // эхний харагдах үр дүн — илүү нь «see more»-ийн ард
 
 const CATEGORY_TABS: {
   cat: Category;
@@ -33,69 +43,128 @@ const CATEGORY_TABS: {
   placeholder: string;
 }[] = [
   { cat: "all", label: "Бүгд", Icon: LayoutGrid, placeholder: "Юу ч хай — кино, аниме, дүр, ном, хоол…" },
-  { cat: "movie", label: "Кино", Icon: Film, placeholder: "Кино хайх… (ж: interstellar, oppenheimer)" },
-  { cat: "tv", label: "Сериал", Icon: Tv, placeholder: "Сериал хайх… (ж: breaking bad, squid game)" },
+  { cat: "movie", label: "Кино", Icon: Film, placeholder: "Кино хайх… (хоосон үлдээвэл бүгдийг үзүүлнэ)" },
+  { cat: "tv", label: "Сериал", Icon: Tv, placeholder: "Сериал хайх… (хоосон үлдээвэл бүгдийг үзүүлнэ)" },
   { cat: "season", label: "Улирал", Icon: Layers, placeholder: "Сериалын нэрээр хайхад улирал бүр нь гарна… (ж: stranger things)" },
-  { cat: "anime", label: "Аниме", Icon: Sparkles, placeholder: "Аниме хайх… (ж: naruto, blue lock)" },
-  { cat: "manga", label: "Манга", Icon: BookText, placeholder: "Манга хайх… (ж: berserk, one piece)" },
+  { cat: "anime", label: "Аниме", Icon: Sparkles, placeholder: "Аниме хайх… (хоосон үлдээвэл бүгдийг үзүүлнэ)" },
+  { cat: "manga", label: "Манга", Icon: BookText, placeholder: "Манга хайх… (хоосон үлдээвэл бүгдийг үзүүлнэ)" },
   { cat: "character", label: "Дүр", Icon: User, placeholder: "Аниме/мангагийн дүр хайх… (ж: levi, gojo)" },
   { cat: "book", label: "Ном", Icon: BookOpen, placeholder: "Ном хайх… (ж: harry potter, dune)" },
   { cat: "wiki", label: "Бусад", Icon: Globe, placeholder: "Юу ч хай: хуушуур, ferrari, messi…" },
 ];
 
+const SORT_TABS: { sort: BrowseSort; label: string; Icon: LucideIcon }[] = [
+  { sort: "popularity", label: "Алдартай", Icon: Flame },
+  { sort: "rating", label: "Үнэлгээ", Icon: Star },
+  { sort: "newest", label: "Шинэ", Icon: CalendarClock },
+];
+
 // Эдгээр таб дээр poster доор subtitle гарна (холимог/ижил нэртэй үр дүнг ялгахад)
 const SUBTITLE_CATS: ReadonlySet<Category> = new Set(["character", "season", "all"]);
 
-// Session доторх client кэш: `${cat}:${query}` → items. LRU (50 хүртэл).
-const clientCache = new Map<string, MediaItem[]>();
+function isBrowseCat(c: Category): c is BrowseCat {
+  return (BROWSE_CATS as readonly string[]).includes(c);
+}
 
-function cacheGet(key: string): MediaItem[] | undefined {
-  const v = clientCache.get(key);
-  if (v) {
+// ---- Client кэш: хайлт (MediaItem[]) + browse ({items, hasMore}) ----
+// sessionStorage-д хадгалснаар page reload-ийн дараа ч агшинд гарна.
+
+const SESSION_KEY = "ct-search-cache-v1";
+const clientCache = new Map<string, MediaItem[]>();
+const browseCache = new Map<string, { items: MediaItem[]; hasMore: boolean }>();
+let cacheHydrated = false;
+
+function hydrateCache() {
+  if (cacheHydrated) return;
+  cacheHydrated = true;
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    if (!raw) return;
+    for (const [k, v] of JSON.parse(raw) as [string, MediaItem[]][]) {
+      clientCache.set(k, v);
+    }
+  } catch {
+    /* quota/parse алдаа — кэшгүй үргэлжилнэ */
+  }
+}
+
+function persistCache() {
+  try {
+    // Сүүлийн 20 query, тус бүр эхний 30 item — quota-д багтана
+    const entries = [...clientCache.entries()]
+      .slice(-20)
+      .map(([k, v]) => [k, v.slice(0, 30)]);
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(entries));
+  } catch {
+    /* хадгалж чадаагүй нь чухал биш */
+  }
+}
+
+function lruGet<V>(map: Map<string, V>, key: string): V | undefined {
+  const v = map.get(key);
+  if (v !== undefined) {
     // recency шинэчилнэ: delete + set нь key-г Map-ийн төгсгөлд шилжүүлнэ
-    clientCache.delete(key);
-    clientCache.set(key, v);
+    map.delete(key);
+    map.set(key, v);
   }
   return v;
 }
 
-function cacheSet(key: string, items: MediaItem[]) {
-  if (clientCache.size >= CLIENT_CACHE_MAX && !clientCache.has(key)) {
-    const oldest = clientCache.keys().next().value;
-    if (oldest !== undefined) clientCache.delete(oldest);
+function lruSet<V>(map: Map<string, V>, key: string, value: V) {
+  if (map.size >= CLIENT_CACHE_MAX && !map.has(key)) {
+    const oldest = map.keys().next().value;
+    if (oldest !== undefined) map.delete(oldest);
   }
-  clientCache.set(key, items);
+  map.set(key, value);
 }
 
 export function SearchTray({
   boardItemIds,
+  watchLaterIds,
   selectedId,
   onSelect,
-  onResults,
+  onPick,
+  onWatchLater,
 }: {
   boardItemIds: Set<string>;
+  watchLaterIds: Set<string>;
   selectedId: string | null;
   onSelect: (item: MediaItem) => void;
-  onResults: (items: MediaItem[]) => void;
+  onPick?: (item: MediaItem, anchor: HTMLElement) => void;
+  onWatchLater?: (item: MediaItem) => void;
 }) {
   const [cat, setCat] = useState<Category>("all");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<MediaItem[]>([]);
   const [loading, setLoading] = useState(false);
-  const [expanded, setExpanded] = useState(false);
   const [rateLimited, setRateLimited] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestKey = useRef("");
 
-  useEffect(
-    () => () => {
+  // ---- Browse (хайлтгүй үзэх) төлөв ----
+  const [selGenres, setSelGenres] = useState<string[]>([]);
+  const [sort, setSort] = useState<BrowseSort>("popularity");
+  const [browseItems, setBrowseItems] = useState<MediaItem[]>([]);
+  const [browsePage, setBrowsePage] = useState(1);
+  const [browseHasMore, setBrowseHasMore] = useState(false);
+  const [browseLoading, setBrowseLoading] = useState(false);
+  const [browseAppending, setBrowseAppending] = useState(false);
+  const browseAbortRef = useRef<AbortController | null>(null);
+  const browseKeyRef = useRef("");
+
+  const browseMode = !query.trim() && isBrowseCat(cat);
+
+  useEffect(() => {
+    hydrateCache();
+    return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
       abortRef.current?.abort();
-    },
-    [],
-  );
+      browseAbortRef.current?.abort();
+    };
+  }, []);
 
+  // ---- Хайлт ----
   async function fetchQuery(activeCat: Category, q: string) {
     const key = `${activeCat}:${q}`;
     abortRef.current?.abort(); // нисэж буй өмнөх request-ийг цуцална (сүүлийнх нь ялна)
@@ -117,11 +186,11 @@ export function SearchTray({
       }
       const json = (await res.json()) as { items: MediaItem[] };
       const items = json.items ?? [];
-      cacheSet(key, items);
+      lruSet(clientCache, key, items);
+      persistCache();
       // Stale guard: хариу ирэх хооронд query/cat өөрчлөгдсөн бол render хийхгүй
       if (latestKey.current === key) {
         setResults(items);
-        onResults(items);
         setLoading(false);
       }
     } catch (err) {
@@ -136,7 +205,6 @@ export function SearchTray({
     const key = `${activeCat}:${q}`;
     latestKey.current = key;
     setRateLimited(false);
-    setExpanded(false); // шинэ хайлт бүрд эхний 10 руу буцна
 
     // Debounce: завсрын query (n, na, nar...) энд устгагдах тул сервер лүү явдаггүй
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -149,10 +217,9 @@ export function SearchTray({
     }
 
     // Client LRU кэш: агшин зуур, сервер лүү огт явахгүй
-    const cached = cacheGet(key);
+    const cached = lruGet(clientCache, key);
     if (cached) {
       setResults(cached);
-      onResults(cached);
       setLoading(false);
       return;
     }
@@ -165,10 +232,119 @@ export function SearchTray({
 
   function handleCatChange(next: Category) {
     setCat(next);
+    setSelGenres([]); // genre-ууд category бүрд өөр тул цэвэрлэнэ
+    setSort("popularity");
     startSearch(next, query); // одоогийн query-г шинэ таб-аар шууд дахин хайна
   }
 
+  // ---- Browse fetch ----
+  const fetchBrowsePage = useCallback(
+    async (
+      bcat: BrowseCat,
+      genres: string[],
+      srt: BrowseSort,
+      page: number,
+      append: boolean,
+    ) => {
+      const key = `browse:${bcat}:${srt}:${[...genres].sort().join(",")}:${page}`;
+      browseKeyRef.current = key;
+      setRateLimited(false);
+
+      const apply = (payload: { items: MediaItem[]; hasMore: boolean }) => {
+        setBrowsePage(page);
+        setBrowseHasMore(payload.hasMore);
+        setBrowseItems((prev) => {
+          if (!append) return payload.items;
+          // Хуудас хооронд давхардсан item (popularity хөдөлсөн үед) хасна
+          const seen = new Set(prev.map((i) => i.id));
+          return [...prev, ...payload.items.filter((i) => !seen.has(i.id))];
+        });
+      };
+
+      const cached = lruGet(browseCache, key);
+      if (cached) {
+        apply(cached);
+        setBrowseLoading(false);
+        setBrowseAppending(false);
+        return;
+      }
+
+      browseAbortRef.current?.abort();
+      const ac = new AbortController();
+      browseAbortRef.current = ac;
+      if (append) setBrowseAppending(true);
+      else setBrowseLoading(true);
+
+      try {
+        const res = await fetch(
+          `/api/browse?cat=${bcat}&genres=${encodeURIComponent(genres.join(","))}&sort=${srt}&page=${page}`,
+          { signal: ac.signal },
+        );
+        if (res.status === 429) {
+          if (browseKeyRef.current === key) {
+            setRateLimited(true);
+            setBrowseLoading(false);
+            setBrowseAppending(false);
+          }
+          return;
+        }
+        const json = (await res.json()) as {
+          items: MediaItem[];
+          hasMore: boolean;
+        };
+        const payload = { items: json.items ?? [], hasMore: !!json.hasMore };
+        lruSet(browseCache, key, payload);
+        if (browseKeyRef.current === key) {
+          apply(payload);
+          setBrowseLoading(false);
+          setBrowseAppending(false);
+        }
+      } catch (err) {
+        if ((err as Error).name !== "AbortError" && browseKeyRef.current === key) {
+          setBrowseLoading(false);
+          setBrowseAppending(false);
+        }
+      }
+    },
+    [],
+  );
+
+  // Browse горимд орох / genre-sort өөрчлөгдөхөд 1-р хуудаснаас шинээр.
+  // Жижиг debounce: chip-үүдийг хурдан дараалан toggle хийхэд нэг л fetch явна
+  useEffect(() => {
+    if (!browseMode) return;
+    const t = setTimeout(
+      () => fetchBrowsePage(cat as BrowseCat, selGenres, sort, 1, false),
+      DEBOUNCE_MS,
+    );
+    return () => clearTimeout(t);
+  }, [browseMode, cat, selGenres, sort, fetchBrowsePage]);
+
   const activeTab = CATEGORY_TABS.find((t) => t.cat === cat)!;
+  const genreDefs = isBrowseCat(cat) ? BROWSE_GENRES[cat] : [];
+  const activeDefs = genreDefs.filter((g) => selGenres.includes(g.slug));
+
+  // Текст хайлттай үед сонгосон genre-үүд client-side (AND) шүүнэ
+  const filteredResults =
+    activeDefs.length > 0
+      ? results.filter((item) =>
+          activeDefs.every((def) => matchesGenre(item.genres, def)),
+        )
+      : results;
+
+  const showSkeletons =
+    (query.trim() ? loading && results.length === 0 : browseLoading && browseItems.length === 0);
+
+  const gridSkeletons = (
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(76px,1fr))] gap-x-2 gap-y-3">
+      {Array.from({ length: 14 }).map((_, i) => (
+        <div key={i} className="flex flex-col items-center gap-1">
+          <Skeleton className="rounded-md" style={{ width: 72, height: POSTER_H }} />
+          <Skeleton className="h-2.5 w-14 rounded" />
+        </div>
+      ))}
+    </div>
+  );
 
   return (
     <div className="glass rounded-2xl p-3.5">
@@ -211,21 +387,76 @@ export function SearchTray({
           placeholder={activeTab.placeholder}
           className="h-11 rounded-xl border-white/10 bg-black/30 pl-10 text-[15px]"
         />
-        {loading && (
+        {(loading || browseLoading) && (
           <Loader2 className="absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-primary" />
         )}
       </div>
 
+      {/* Genre шүүлтүүр + эрэмбэлэлт (browse боломжтой таб дээр) */}
+      {genreDefs.length > 0 && (
+        <div className="mb-3 flex flex-col gap-2">
+          <div className="fade-x -mx-1 flex gap-1 overflow-x-auto px-1 pb-0.5">
+            {genreDefs.map((g) => {
+              const active = selGenres.includes(g.slug);
+              return (
+                <button
+                  key={g.slug}
+                  type="button"
+                  onClick={() =>
+                    setSelGenres((prev) =>
+                      active
+                        ? prev.filter((s) => s !== g.slug)
+                        : [...prev, g.slug],
+                    )
+                  }
+                  className={cn(
+                    "shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+                    active
+                      ? "border-primary/60 bg-primary/20 text-primary"
+                      : "border-white/10 bg-white/[0.03] text-muted-foreground hover:border-white/25 hover:text-foreground",
+                  )}
+                >
+                  {g.label}
+                </button>
+              );
+            })}
+          </div>
+          {/* Sort — зөвхөн browse горимд (хайлтад relevance эрэмбэ ялна) */}
+          {browseMode && (
+            <div className="flex gap-1">
+              {SORT_TABS.map((s) => (
+                <button
+                  key={s.sort}
+                  type="button"
+                  onClick={() => setSort(s.sort)}
+                  className={cn(
+                    "flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-semibold transition-colors",
+                    sort === s.sort
+                      ? "bg-primary/20 text-primary"
+                      : "bg-white/[0.03] text-muted-foreground hover:bg-white/10 hover:text-foreground",
+                  )}
+                >
+                  <s.Icon className="h-3 w-3" />
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Progress bar — хайлт явж байгааг илтгэнэ */}
       <div className="relative -mt-2 mb-2 h-0.5 overflow-hidden rounded-full">
-        {loading && <div className="progress-bar absolute inset-0" />}
+        {(loading || browseLoading) && <div className="progress-bar absolute inset-0" />}
       </div>
 
-      {/* Results */}
+      {/* Үр дүн: босоо grid (доошоо гүйлгэнэ) */}
       <div
         className={cn(
-          "flex items-start gap-2 overflow-x-auto pb-1 transition-opacity duration-300",
-          loading && results.length > 0 && "opacity-40",
+          "transition-opacity duration-300",
+          ((loading && results.length > 0) ||
+            (browseLoading && browseItems.length > 0)) &&
+            "opacity-40",
         )}
         style={{ minHeight: POSTER_H + 34 }}
       >
@@ -234,70 +465,55 @@ export function SearchTray({
             AniList түр ачаалалтай байна — хэдэн секунд хүлээгээд дахин оролдоно
             уу
           </p>
-        ) : loading && results.length === 0 ? (
-          Array.from({ length: 9 }).map((_, i) => (
-            <div key={i} className="flex w-[72px] shrink-0 flex-col gap-1">
-              <Skeleton
-                className="rounded-md"
-                style={{ width: 72, height: POSTER_H }}
-              />
-              <Skeleton className="h-2.5 w-14 rounded" />
-            </div>
-          ))
-        ) : results.length > 0 ? (
-          <>
-            {(expanded ? results : results.slice(0, VISIBLE_LIMIT)).map(
-              (item, i) => (
-                <div
-                  key={item.id}
-                  className="pop-in flex w-[72px] shrink-0 flex-col gap-1"
-                  style={{ animationDelay: `${Math.min(i, 16) * 25}ms` }}
-                >
-                  <SearchPoster
-                    item={item}
-                    onBoard={boardItemIds.has(item.id)}
-                    selected={selectedId === item.id}
-                    onSelect={onSelect}
-                  />
-                  {/* Нэр байнга харагдана — юу болохыг hover хийлгүй мэднэ */}
-                  <span
-                    className="line-clamp-2 text-center text-[9.5px] leading-[1.25] text-foreground/70"
-                    title={item.title}
-                  >
-                    {item.title}
-                  </span>
-                  {SUBTITLE_CATS.has(cat) && item.subtitle && (
-                    <span
-                      className="truncate text-center text-[8.5px] leading-tight text-muted-foreground/60"
-                      title={item.subtitle}
-                    >
-                      {item.subtitle}
-                    </span>
-                  )}
-                </div>
-              ),
-            )}
-            {!expanded && results.length > VISIBLE_LIMIT && (
-              <button
-                type="button"
-                onClick={() => setExpanded(true)}
-                className="glass flex shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-white/10 text-muted-foreground transition-all hover:border-primary/50 hover:text-primary"
-                style={{ width: 72, height: POSTER_H }}
-              >
-                <span className="text-lg font-bold">
-                  +{results.length - VISIBLE_LIMIT}
-                </span>
-                <span className="text-[10px]">бүгдийг харах</span>
-              </button>
-            )}
-          </>
+        ) : showSkeletons ? (
+          gridSkeletons
+        ) : query.trim() ? (
+          filteredResults.length > 0 ? (
+            <MediaGrid
+              items={filteredResults}
+              boardItemIds={boardItemIds}
+              watchLaterIds={watchLaterIds}
+              selectedId={selectedId}
+              showSubtitles={SUBTITLE_CATS.has(cat)}
+              onSelect={onSelect}
+              onPick={onPick}
+              onWatchLater={onWatchLater}
+            />
+          ) : (
+            <p className="px-2 text-sm text-muted-foreground/60">
+              {loading
+                ? ""
+                : activeDefs.length > 0 && results.length > 0
+                  ? "Сонгосон genre-д таарах үр дүн алга — шүүлтүүрээ цэвэрлээд үзээрэй"
+                  : "Үр дүн олдсонгүй"}
+            </p>
+          )
+        ) : browseMode ? (
+          <MediaGrid
+            items={browseItems}
+            boardItemIds={boardItemIds}
+            watchLaterIds={watchLaterIds}
+            selectedId={selectedId}
+            showSubtitles={false}
+            onSelect={onSelect}
+            onPick={onPick}
+            onWatchLater={onWatchLater}
+            hasMore={browseHasMore}
+            loadingMore={browseAppending}
+            onLoadMore={() =>
+              fetchBrowsePage(
+                cat as BrowseCat,
+                selGenres,
+                sort,
+                browsePage + 1,
+                true,
+              )
+            }
+          />
         ) : (
           <p className="px-2 text-sm text-muted-foreground/60">
-            {query.trim()
-              ? loading
-                ? ""
-                : "Үр дүн олдсонгүй"
-              : "Хайлт хийгээд poster-оо tier рүү чирээрэй ↑"}
+            Хайлт хийгээд poster дээр дараад tier-ээ сонгоорой (чирж ч болно) —
+            Кино/Сериал/Аниме/Манга таб дээр хайлгүйгээр бүгдийг үзэж болно
           </p>
         )}
       </div>

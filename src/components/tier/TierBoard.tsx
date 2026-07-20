@@ -47,10 +47,14 @@ import { ShareMenu } from "@/components/ShareMenu";
 import { uploadImageFiles } from "@/lib/uploadImages";
 import { TierRow } from "./TierRow";
 import { SearchTray } from "./SearchTray";
+import { WatchLaterTray } from "./WatchLaterTray";
+import { TierMiniMap } from "./TierMiniMap";
+import { TierPickerPopover, type PickerState } from "./TierPickerPopover";
 import { DetailPanel } from "./DetailPanel";
 import { SortablePoster, PosterOverlay, POSTER_H } from "./PosterCard";
 import {
   TIER_COLORS,
+  normalizeTierListData,
   type MediaItem,
   type TierListData,
   type TierListMeta,
@@ -59,6 +63,7 @@ import {
 import { cn } from "@/lib/utils";
 
 const TRAY_ID = "tray";
+const WATCH_LATER_ID = "watchLater";
 
 // PNG export: утас/цонхны хэмжээ, scroll-оос үл хамааран энэ өргөнтэй
 // desktop layout-аар export хийгдэнэ
@@ -71,6 +76,7 @@ function UnrankedTray({
   items,
   selectedId,
   onSelect,
+  onPick,
   uploading,
   uploadFiles,
 }: {
@@ -78,6 +84,7 @@ function UnrankedTray({
   items: Record<string, MediaItem>;
   selectedId: string | null;
   onSelect: (item: MediaItem) => void;
+  onPick?: (item: MediaItem, anchor: HTMLElement) => void;
   uploading: number;
   uploadFiles: (files: FileList | File[]) => void;
 }) {
@@ -149,6 +156,7 @@ function UnrankedTray({
                 item={items[id]}
                 selected={selectedId === id}
                 onSelect={onSelect}
+                onPick={onPick}
               />
             ) : null,
           )}
@@ -180,8 +188,8 @@ export function TierBoard({
   list: TierListMeta;
   initialItems: MediaItem[];
 }) {
-  const [data, setData] = useState<TierListData>(
-    () => JSON.parse(list.data) as TierListData,
+  const [data, setData] = useState<TierListData>(() =>
+    normalizeTierListData(JSON.parse(list.data)),
   );
   const [title, setTitle] = useState(list.title);
   const [items, setItems] = useState<Record<string, MediaItem>>(() =>
@@ -198,6 +206,8 @@ export function TierBoard({
   } | null>(null);
   const [uploading, setUploading] = useState(0);
   const [pageFileOver, setPageFileOver] = useState(false);
+  const [picker, setPicker] = useState<PickerState | null>(null);
+  const [showMiniMap, setShowMiniMap] = useState(false);
   const fileDragDepth = useRef(0);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">(
     "idle",
@@ -230,6 +240,18 @@ export function TierBoard({
   const boardRef = useRef<HTMLDivElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
 
+  // Tier мөрүүд дэлгэцээс бүрэн гарсан үед mini-map гарч ирнэ
+  useEffect(() => {
+    const el = boardRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      ([entry]) => setShowMiniMap(!entry.isIntersecting),
+      { rootMargin: "-60px 0px 0px 0px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
   // Мөрүүд анх нээхэд stagger орж ирнэ (нэг удаа); clearProps — dnd-kit-ийн
   // transform-уудтай зөрчилдөхгүйн тулд дуусмагц inline style-ээ цэвэрлэнэ
   useGSAP(
@@ -258,6 +280,7 @@ export function TierBoard({
     const s = new Set<string>();
     for (const r of data.rows) for (const id of r.itemIds) s.add(id);
     for (const id of data.tray) s.add(id);
+    for (const id of data.watchLater) s.add(id);
     return s;
   }, [data]);
 
@@ -301,15 +324,17 @@ export function TierBoard({
   const findContainer = useCallback(
     (itemId: string): string | null => {
       if (data.tray.includes(itemId)) return TRAY_ID;
+      if (data.watchLater.includes(itemId)) return WATCH_LATER_ID;
       return data.rows.find((r) => r.itemIds.includes(itemId))?.id ?? null;
     },
     [data],
   );
 
-  /** over.id → container id ("container:x" droppable эсвэл доторх item id) */
+  /** over.id → container id ("container:x"/"mini:x" droppable эсвэл доторх item id) */
   const resolveContainer = useCallback(
     (overId: string): string | null => {
       if (overId.startsWith("container:")) return overId.slice("container:".length);
+      if (overId.startsWith("mini:")) return overId.slice("mini:".length);
       if (overId.startsWith("search:")) return null;
       return findContainer(overId);
     },
@@ -317,13 +342,14 @@ export function TierBoard({
   );
 
   function getIds(d: TierListData, container: string): string[] {
-    return container === TRAY_ID
-      ? d.tray
-      : (d.rows.find((r) => r.id === container)?.itemIds ?? []);
+    if (container === TRAY_ID) return d.tray;
+    if (container === WATCH_LATER_ID) return d.watchLater;
+    return d.rows.find((r) => r.id === container)?.itemIds ?? [];
   }
 
   function setIds(d: TierListData, container: string, ids: string[]): TierListData {
     if (container === TRAY_ID) return { ...d, tray: ids };
+    if (container === WATCH_LATER_ID) return { ...d, watchLater: ids };
     return {
       ...d,
       rows: d.rows.map((r) => (r.id === container ? { ...r, itemIds: ids } : r)),
@@ -331,6 +357,7 @@ export function TierBoard({
   }
 
   function handleDragStart(e: DragStartEvent) {
+    setPicker(null); // чирэлт эхэлбэл нээлттэй picker хаагдана
     const item = (e.active.data.current as { item?: MediaItem })?.item;
     if (item) {
       setActiveItem(item);
@@ -397,6 +424,53 @@ export function TierBoard({
     popDropped(activeId);
   }
 
+  // ---------- Click-to-assign ----------
+  /** Poster дээр дарахад picker нээх handler (source: search/tray/watchLater/rowId) */
+  const openPicker = useCallback(
+    (source: string) => (item: MediaItem, anchor: HTMLElement) => {
+      // Нэг poster дээр дахин дарвал toggle хийж хаана
+      setPicker((p) =>
+        p && p.item.id === item.id && p.source === source
+          ? null
+          : { item, source, anchor },
+      );
+    },
+    [],
+  );
+
+  /** Picker-ээс tier сонгоход: search-ээс бол нэмнэ, бусад нь зөөнө */
+  function assignItem(item: MediaItem, source: string, target: string) {
+    setPicker(null);
+    if (source === target) return;
+
+    if (source === "search") {
+      if (boardItemIds.has(item.id)) {
+        toast.info("Энэ нь аль хэдийн board дээр байна");
+        return;
+      }
+      setItems((m) => ({ ...m, [item.id]: item }));
+      setData((d) => setIds(d, target, [...getIds(d, target), item.id]));
+    } else {
+      setData((d) => {
+        const fromIds = getIds(d, source).filter((id) => id !== item.id);
+        const toIds = [...getIds(d, target), item.id];
+        return setIds(setIds(d, source, fromIds), target, toIds);
+      });
+    }
+    popDropped(item.id);
+  }
+
+  /** Browse/хайлтын 🔖 товч: «Дараа үзэх»-д шууд нэмнэ */
+  function addToWatchLater(item: MediaItem) {
+    if (boardItemIds.has(item.id)) {
+      toast.info("Энэ нь аль хэдийн board дээр байна");
+      return;
+    }
+    setItems((m) => ({ ...m, [item.id]: item }));
+    setData((d) => ({ ...d, watchLater: [...d.watchLater, item.id] }));
+    toast.success("«Дараа үзэх»-д нэмэгдлээ");
+  }
+
   // ---------- Мөр удирдах ----------
   function addRow() {
     setData((d) => ({
@@ -427,6 +501,7 @@ export function TierBoard({
     setData((d) => {
       const row = d.rows.find((r) => r.id === rowId);
       return {
+        ...d, // watchLater зэрэг бусад талбарууд хэвээр үлдэнэ
         rows: d.rows.filter((r) => r.id !== rowId),
         tray: [...d.tray, ...(row?.itemIds ?? [])], // item-ууд нь эрэмбэлээгүй рүү буцна
       };
@@ -648,6 +723,20 @@ export function TierBoard({
         <div className="flex flex-1 flex-col gap-4 lg:flex-row">
           {/* Зүүн: board + tray + search */}
           <div className="flex min-w-0 flex-1 flex-col gap-3">
+            {/* Доошоо гүйлгэхэд tier-үүдийн байдал дээр наалдаж харагдана */}
+            <TierMiniMap
+              visible={showMiniMap}
+              rows={data.rows}
+              tray={data.tray}
+              watchLater={data.watchLater}
+              items={items}
+              onJump={() =>
+                boardRef.current?.scrollIntoView({
+                  behavior: "smooth",
+                  block: "start",
+                })
+              }
+            />
             <div ref={boardRef} className="flex flex-col gap-2 rounded-2xl p-1">
               {data.rows.map((row) => (
                 <TierRow
@@ -656,6 +745,7 @@ export function TierBoard({
                   items={items}
                   selectedId={selected?.id ?? null}
                   onSelect={setSelected}
+                  onPick={openPicker(row.id)}
                   onEdit={setEditingRow}
                   onDelete={deleteRow}
                 />
@@ -676,15 +766,26 @@ export function TierBoard({
               items={items}
               selectedId={selected?.id ?? null}
               onSelect={setSelected}
+              onPick={openPicker(TRAY_ID)}
               uploading={uploading}
               uploadFiles={handleUploadFiles}
             />
 
-            <SearchTray
-              boardItemIds={boardItemIds}
+            <WatchLaterTray
+              itemIds={data.watchLater}
+              items={items}
               selectedId={selected?.id ?? null}
               onSelect={setSelected}
-              onResults={() => {}}
+              onPick={openPicker(WATCH_LATER_ID)}
+            />
+
+            <SearchTray
+              boardItemIds={boardItemIds}
+              watchLaterIds={new Set(data.watchLater)}
+              selectedId={selected?.id ?? null}
+              onSelect={setSelected}
+              onPick={openPicker("search")}
+              onWatchLater={addToWatchLater}
             />
           </div>
 
@@ -698,6 +799,18 @@ export function TierBoard({
           {activeItem ? <PosterOverlay item={activeItem} /> : null}
         </DragOverlay>
       </DndContext>
+
+      {/* Click-to-assign: poster дээр дарахад tier сонгох popup */}
+      <TierPickerPopover
+        picker={picker}
+        rows={data.rows}
+        trayCount={data.tray.length}
+        watchLaterCount={data.watchLater.length}
+        onAssign={(target) => {
+          if (picker) assignItem(picker.item, picker.source, target);
+        }}
+        onClose={() => setPicker(null)}
+      />
 
       {/* Download preview dialog — татахын өмнө ямар харагдахыг үзүүлнэ */}
       <Dialog

@@ -26,6 +26,21 @@ export interface TierRowData {
 export interface TierListData {
   rows: TierRowData[];
   tray: string[];
+  watchLater: string[];
+}
+
+/**
+ * DB-ийн хуучин blob-уудад watchLater талбар байхгүй тул parse хийсэн
+ * бүх газар үүгээр normalize хийнэ — дараагийн autosave дээр талбар нь
+ * өөрөө бичигдэнэ (migration хэрэггүй).
+ */
+export function normalizeTierListData(raw: unknown): TierListData {
+  const d = (raw ?? {}) as Partial<TierListData>;
+  return {
+    rows: d.rows ?? [],
+    tray: d.tray ?? [],
+    watchLater: d.watchLater ?? [],
+  };
 }
 
 export interface TierListMeta {
