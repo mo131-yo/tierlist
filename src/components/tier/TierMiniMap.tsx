@@ -14,11 +14,31 @@ import { cn } from "@/lib/utils";
  * буулгаж болно; дарвал board руу эргэж очно.
  */
 
+/** Tier мөрөөс ялгарах accent — эрэмбэлэгдээгүй үлдсэн зүйлсийг анзааруулна */
+type PillAccent = "row" | "tray" | "watchLater";
+
+const ACCENT_STYLE: Record<
+  Exclude<PillAccent, "row">,
+  { filled: string; empty: string; icon: string }
+> = {
+  watchLater: {
+    filled: "bg-amber-400 text-black ring-1 ring-amber-300/50",
+    empty: "bg-white/5 text-muted-foreground/50",
+    icon: "text-amber-400/80",
+  },
+  tray: {
+    filled: "bg-white/85 text-black",
+    empty: "bg-white/5 text-muted-foreground/50",
+    icon: "text-muted-foreground",
+  },
+};
+
 function MiniPill({
   containerId,
   label,
   color,
   Icon,
+  accent = "row",
   itemIds,
   items,
   onJump,
@@ -27,22 +47,31 @@ function MiniPill({
   label: string;
   color?: string;
   Icon?: LucideIcon;
+  accent?: PillAccent;
   itemIds: string[];
   items: Record<string, MediaItem>;
   onJump: () => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `mini:${containerId}` });
   const thumbs = itemIds.slice(-3).map((id) => items[id]).filter(Boolean);
+  const count = itemIds.length;
+  const accentStyle = accent === "row" ? null : ACCENT_STYLE[accent];
 
   return (
     <button
       ref={setNodeRef}
       type="button"
       onClick={onJump}
-      title={`${label} — ${itemIds.length} · дарвал board руу очно`}
+      title={
+        accentStyle
+          ? `${label} — ${count} зүйл үлдсэн · дарвал board руу очно`
+          : `${label} — ${count} · дарвал board руу очно`
+      }
       className={cn(
         "flex shrink-0 items-center gap-1.5 rounded-lg border border-white/5 bg-white/[0.04] px-2 py-1 transition-all hover:bg-white/10",
         isOver && "scale-105 border-primary/60 bg-primary/15",
+        // Үлдсэн зүйлтэй tray/watchLater нь tier мөрүүдээс ялгарч харагдана
+        accent === "watchLater" && count > 0 && "border-amber-400/30 bg-amber-400/10",
       )}
     >
       {color ? (
@@ -51,10 +80,22 @@ function MiniPill({
           style={{ backgroundColor: color }}
         />
       ) : Icon ? (
-        <Icon className="h-3 w-3 shrink-0 text-muted-foreground" />
+        <Icon className={cn("h-3 w-3 shrink-0", accentStyle?.icon)} />
       ) : null}
       <span className="max-w-16 truncate text-[11px] font-bold">{label}</span>
-      <span className="text-[10px] text-muted-foreground">{itemIds.length}</span>
+      {accentStyle ? (
+        // Badge: эрэмбэлэхээр хүлээж буй зүйл хэд үлдсэнийг тодотгоно
+        <span
+          className={cn(
+            "min-w-4 rounded-full px-1 text-center text-[10px] font-bold leading-4 tabular-nums transition-colors",
+            count > 0 ? accentStyle.filled : accentStyle.empty,
+          )}
+        >
+          {count}
+        </span>
+      ) : (
+        <span className="text-[10px] text-muted-foreground">{count}</span>
+      )}
       {thumbs.length > 0 && (
         <span className="flex gap-0.5">
           {thumbs.map((it) => {
@@ -120,6 +161,7 @@ export function TierMiniMap({
               containerId="watchLater"
               label="Дараа үзэх"
               Icon={Bookmark}
+              accent="watchLater"
               itemIds={watchLater}
               items={items}
               onJump={onJump}
@@ -128,6 +170,7 @@ export function TierMiniMap({
               containerId="tray"
               label="Эрэмбэлээгүй"
               Icon={Inbox}
+              accent="tray"
               itemIds={tray}
               items={items}
               onJump={onJump}

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext,
   DragOverlay,
-  PointerSensor,
+  MouseSensor,
   TouchSensor,
   closestCorners,
   useSensor,
@@ -283,9 +283,14 @@ export function TierBoard({
     { scope: pageRef },
   );
 
+  // MouseSensor зөвхөн хулгана/трэкпад дээр ажиллана (touch-д хөндлөнгөөс
+  // орохгүй) — тиймээс PosterCard-д `touch-none` шаардлагагүй болж
+  // (доор `touch-pan-y`), утсан дээр хуудас гүйлгэх боломж сэргэсэн.
+  // TouchSensor нь удаан дарж (long-press) эхэлдэг тул богино хугацааны
+  // swipe scroll хэвээр дамждаг — 200ms/8px нь scroll-той андуурахгүй хэмжээ.
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 6 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
   );
 
   const boardItemIds = useMemo(() => collectItemIds(data), [data]);
@@ -743,6 +748,7 @@ export function TierBoard({
               onSelect={setSelected}
               onPick={openPicker(SEARCH_SOURCE)}
               onWatchLater={addToWatchLater}
+              dragging={activeItem !== null}
             />
           </div>
 

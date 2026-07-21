@@ -85,7 +85,10 @@ export function SortablePoster({
         onSelect(item);
         onPick?.(item, e.currentTarget);
       }}
-      className="cursor-grab active:cursor-grabbing touch-none"
+      // touch-none биш: утсан дээр хуудсыг босоогоор гүйлгэх боломж үлдэнэ,
+      // харин зурган дээр удаан дарахад (TouchSensor delay) чирэлт эхэлнэ.
+      // select-none/webkit-touch-callout — iOS-ийн long-press зурган цэс хаана.
+      className="cursor-grab touch-pan-y select-none active:cursor-grabbing [-webkit-touch-callout:none]"
     >
       <PosterImage item={item} selected={selected} />
     </div>
@@ -122,7 +125,7 @@ export function SearchPoster({
         if (!onBoard) onPick?.(item, e.currentTarget);
       }}
       className={cn(
-        "touch-none",
+        "touch-pan-y select-none [-webkit-touch-callout:none]",
         onBoard ? "cursor-not-allowed opacity-35" : "cursor-grab active:cursor-grabbing",
         isDragging && "opacity-30",
       )}

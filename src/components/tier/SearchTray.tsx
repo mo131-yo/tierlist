@@ -126,6 +126,7 @@ export function SearchTray({
   onSelect,
   onPick,
   onWatchLater,
+  dragging = false,
 }: {
   boardItemIds: Set<string>;
   watchLaterIds: Set<string>;
@@ -133,6 +134,8 @@ export function SearchTray({
   onSelect: (item: MediaItem) => void;
   onPick?: (item: MediaItem, anchor: HTMLElement) => void;
   onWatchLater?: (item: MediaItem) => void;
+  /** dnd-kit чирэлт идэвхтэй үед true — virtualization түр унтарна */
+  dragging?: boolean;
 }) {
   const [cat, setCat] = useState<Category>("all");
   const [query, setQuery] = useState("");
@@ -517,6 +520,7 @@ export function SearchTray({
               onSelect={onSelect}
               onPick={onPick}
               onWatchLater={onWatchLater}
+              dragging={dragging}
             />
           ) : (
             <p className="px-2 text-sm text-muted-foreground/60">
@@ -539,6 +543,7 @@ export function SearchTray({
             onSelect={onSelect}
             onPick={onPick}
             onWatchLater={onWatchLater}
+            dragging={dragging}
             hasMore={browseHasMore}
             loadingMore={browseAppending}
             onLoadMore={() =>
