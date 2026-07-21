@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { inArray, eq, desc, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from ".";
@@ -378,9 +379,11 @@ export async function createTierList(title?: string) {
   return row;
 }
 
-export async function getTierList(id: string) {
+// React.cache — нэг request-ийн дотор generateMetadata + page component +
+// opengraph-image хоёр/гурав хамтдаа дуудвал ганц л DB round-trip хийнэ
+export const getTierList = cache(async (id: string) => {
   return db.query.tierLists.findFirst({ where: eq(tierLists.id, id) });
-}
+});
 
 export async function updateTierList(
   id: string,

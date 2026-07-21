@@ -15,7 +15,17 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// og:image зэрэг харьцангуй URL-ыг бүтэн домэйнтэй болгоход хэрэгтэй —
+// байхгүй бол Discord/Twitter зургийг татаж чадахгүй. Vercel дээр
+// VERCEL_URL автоматаар (env тохируулаагүй ч) орж ирдэг.
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL
+  ? process.env.NEXT_PUBLIC_SITE_URL
+  : process.env.VERCEL_URL
+    ? `https://${process.env.VERCEL_URL}`
+    : "http://localhost:3000";
+
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl),
   title: "CineTier — Кино/Аниме Tier List",
   description:
     "Кино, аниме, сериалаа хайгаад шууд tier list хий — poster автоматаар татагдана.",
