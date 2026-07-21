@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { cachedBrowse, refreshBrowse } from "@/db/queries";
 import { isBrowseCategory, RateLimitError } from "@/lib/sources";
-import { BROWSE_GENRES, BROWSE_SORTS, type BrowseSort } from "@/lib/genres";
+import {
+  BROWSE_GENRES,
+  BROWSE_SORTS,
+  isGenreMode,
+  type BrowseSort,
+  type GenreMode,
+} from "@/lib/genres";
 
 // Browse хуудсууд query-ээс ч сайн кэшлэгдэнэ (популярлаг удаан өөрчлөгддөг)
 const CACHE_HEADER = "public, s-maxage=21600, stale-while-revalidate=86400";
@@ -23,6 +29,9 @@ export async function GET(req: NextRequest) {
     ? (sortParam as BrowseSort)
     : "popularity";
 
+  const modeParam = sp.get("mode");
+  const mode: GenreMode = isGenreMode(modeParam) ? modeParam : "and";
+
   const page = Math.min(
     MAX_PAGE,
     Math.max(1, Number.parseInt(sp.get("page") ?? "1", 10) || 1),
@@ -37,10 +46,10 @@ export async function GET(req: NextRequest) {
 
   try {
     const t0 = performance.now();
-    const opts = { genreSlugs, sort, page };
+    const opts = { genreSlugs, sort, page, mode };
     const { items, hasMore, cache } = await cachedBrowse(cat, opts);
     console.log(
-      `[browse] ${cat} sort=${sort} genres=[${genreSlugs.join(",")}] p${page} cache ${cache} — ${items.length} items in ${(performance.now() - t0).toFixed(1)}ms`,
+      `[browse] ${cat} sort=${sort} genres=[${genreSlugs.join(",")}]/${mode} p${page} cache ${cache} — ${items.length} items in ${(performance.now() - t0).toFixed(1)}ms`,
     );
     if (cache === "STALE") {
       after(() => refreshBrowse(cat, opts));

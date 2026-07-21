@@ -3,11 +3,23 @@ import { nanoid } from "nanoid";
 import { db } from ".";
 import { mediaItems, searchCache, tierLists, type MediaItemRow } from "./schema";
 import type { NormalizedMedia } from "@/lib/tmdb";
-import { searchSource, browseSource, type Category } from "@/lib/sources";
-import type { BrowseCat, BrowseSort } from "@/lib/genres";
+import {
+  searchSource,
+  browseSource,
+  type BrowseOpts,
+  type Category,
+} from "@/lib/sources";
+import { chunk, dedupeById } from "@/lib/batch";
+import type { BrowseCat } from "@/lib/genres";
 import type { MediaItem as MediaItemDto, TierRowData, TierListData } from "@/lib/types";
 
 export type { MediaItemDto, TierRowData, TierListData };
+
+/**
+ * `db` эсвэл идэвхтэй transaction — bulk бичилтүүд хоёуланд ажиллана.
+ * (drizzle-ийн tx нь db-тэй ижил query builder API-тай)
+ */
+type DbExecutor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -55,6 +67,26 @@ async function loadCachedItems(ids: string[]): Promise<MediaItemDto[] | null> {
   return ids.map((id) => byId.get(id)!).map(rowToDto);
 }
 
+/**
+ * Кэшийн бичилтийг ЦОГЦООР нь хийнэ: media_items мөрүүд + search_cache мөр
+ * нэг transaction. Тусад нь бичвэл дундаас нь унасан үед search_cache нь
+ * бүтэн id жагсаалт заасаар атал media_items дутуу үлдэж, `loadCachedItems`
+ * үргэлж null буцаах → тухайн query мөнхийн MISS болно.
+ * АНХААР: гадаад API дуудлага transaction-ы ГАДНА байна — удаан HTTP-ийн
+ * турш pooler-ийн холболт (max: 5) барих ёсгүй.
+ */
+async function commitCache(
+  items: NormalizedMedia[],
+  cacheKey: string,
+  cacheValue: unknown,
+  now: number,
+) {
+  await db.transaction(async (tx) => {
+    await upsertMediaItems(items, now, tx);
+    await writeSearchCache(cacheKey, cacheValue, now, tx);
+  });
+}
+
 /** MISS/refresh зам: эх сурвалжаас татаж media_items + search_cache-д бичнэ */
 async function fetchAndCacheSearch(
   cat: Category,
@@ -63,14 +95,18 @@ async function fetchAndCacheSearch(
 ): Promise<MediaItemDto[]> {
   const now = Date.now();
   const results = await searchSource(cat, query);
-  await upsertMediaItems(results, now);
-  await writeSearchCache(cacheKey, results.map((r) => r.id), now);
+  await commitCache(results, cacheKey, results.map((r) => r.id), now);
   return results;
 }
 
-async function writeSearchCache(cacheKey: string, itemIds: unknown, now: number) {
+async function writeSearchCache(
+  cacheKey: string,
+  itemIds: unknown,
+  now: number,
+  exec: DbExecutor = db,
+) {
   const json = JSON.stringify(itemIds);
-  await db
+  await exec
     .insert(searchCache)
     .values({ query: cacheKey, itemIds: json, createdAt: now })
     .onConflictDoUpdate({
@@ -134,28 +170,31 @@ export async function refreshSearch(cat: Category, rawQuery: string) {
 
 const BROWSE_TTL_MS = 1 * DAY;
 
-function browseCacheKey(
-  cat: BrowseCat,
-  opts: { genreSlugs: string[]; sort: BrowseSort; page: number },
-): string {
-  return `browse:${cat}:${opts.sort}:${[...opts.genreSlugs].sort().join(",")}:${opts.page}`;
+function browseCacheKey(cat: BrowseCat, opts: BrowseOpts): string {
+  // mode ЗААВАЛ орно — үгүй бол AND/OR хоёр бие биенийхээ кэшийг уншина
+  const genres = [...opts.genreSlugs].sort().join(",");
+  return `browse:${cat}:${opts.sort}:${opts.mode}:${genres}:${opts.page}`;
 }
 
 async function fetchAndCacheBrowse(
   cat: BrowseCat,
-  opts: { genreSlugs: string[]; sort: BrowseSort; page: number },
+  opts: BrowseOpts,
   cacheKey: string,
 ): Promise<{ items: MediaItemDto[]; hasMore: boolean }> {
   const now = Date.now();
   const { items, hasMore } = await browseSource(cat, opts);
-  await upsertMediaItems(items, now);
-  await writeSearchCache(cacheKey, { ids: items.map((i) => i.id), hasMore }, now);
+  await commitCache(
+    items,
+    cacheKey,
+    { ids: items.map((i) => i.id), hasMore },
+    now,
+  );
   return { items, hasMore };
 }
 
 export async function cachedBrowse(
   cat: BrowseCat,
-  opts: { genreSlugs: string[]; sort: BrowseSort; page: number },
+  opts: BrowseOpts,
 ): Promise<{ items: MediaItemDto[]; hasMore: boolean; cache: CacheStatus }> {
   const cacheKey = browseCacheKey(cat, opts);
   const now = Date.now();
@@ -178,10 +217,7 @@ export async function cachedBrowse(
 }
 
 /** STALE үед browse route-ийн after()-оос дуудагдана */
-export async function refreshBrowse(
-  cat: BrowseCat,
-  opts: { genreSlugs: string[]; sort: BrowseSort; page: number },
-) {
+export async function refreshBrowse(cat: BrowseCat, opts: BrowseOpts) {
   const cacheKey = browseCacheKey(cat, opts);
   if (inFlightRefresh.has(cacheKey)) return;
   inFlightRefresh.add(cacheKey);
@@ -197,15 +233,18 @@ export async function refreshBrowse(
 
 const UPSERT_CHUNK = 100;
 
-async function upsertMediaItems(items: NormalizedMedia[], now: number) {
-  // Нэг statement дотор ижил id хоёр удаа орвол Postgres
-  // "ON CONFLICT DO UPDATE command cannot affect row a second time" шиддэг
-  const deduped = [...new Map(items.map((i) => [i.id, i])).values()];
-  for (let i = 0; i < deduped.length; i += UPSERT_CHUNK) {
-    await db
+async function upsertMediaItems(
+  items: NormalizedMedia[],
+  now: number,
+  exec: DbExecutor = db,
+) {
+  // dedupeById заавал — нэг statement дотор ижил id давтагдвал Postgres
+  // "ON CONFLICT DO UPDATE command cannot affect row a second time" шиднэ
+  for (const part of chunk(dedupeById(items), UPSERT_CHUNK)) {
+    await exec
       .insert(mediaItems)
       .values(
-        deduped.slice(i, i + UPSERT_CHUNK).map((item) => ({
+        part.map((item) => ({
           id: item.id,
           tmdbId: item.tmdbId,
           mediaType: item.mediaType,

@@ -60,10 +60,22 @@ import {
   type TierListMeta,
   type TierRowData,
 } from "@/lib/types";
+import {
+  SEARCH_SOURCE,
+  TRAY_ID,
+  WATCH_LATER_ID,
+  collectItemIds,
+  getIds,
+  insertFromSearch,
+  moveToContainer,
+  setIds,
+  assignItem as assignItemData,
+  addRow as addRowData,
+  editRow as editRowData,
+  findContainer as findContainerIn,
+  removeRow as removeRowData,
+} from "@/lib/tierData";
 import { cn } from "@/lib/utils";
-
-const TRAY_ID = "tray";
-const WATCH_LATER_ID = "watchLater";
 
 // PNG export: утас/цонхны хэмжээ, scroll-оос үл хамааран энэ өргөнтэй
 // desktop layout-аар export хийгдэнэ
@@ -276,13 +288,7 @@ export function TierBoard({
     useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 6 } }),
   );
 
-  const boardItemIds = useMemo(() => {
-    const s = new Set<string>();
-    for (const r of data.rows) for (const id of r.itemIds) s.add(id);
-    for (const id of data.tray) s.add(id);
-    for (const id of data.watchLater) s.add(id);
-    return s;
-  }, [data]);
+  const boardItemIds = useMemo(() => collectItemIds(data), [data]);
 
   // ---------- Autosave: debounce + version counter + AbortController ----------
   const saveVersion = useRef(0);
@@ -321,12 +327,9 @@ export function TierBoard({
   }, [data, title, list.id]);
 
   // ---------- DnD ----------
+  // Өгөгдөл дээрх цэвэр үйлдлүүд @/lib/tierData-д (тестлэгдсэн) байна
   const findContainer = useCallback(
-    (itemId: string): string | null => {
-      if (data.tray.includes(itemId)) return TRAY_ID;
-      if (data.watchLater.includes(itemId)) return WATCH_LATER_ID;
-      return data.rows.find((r) => r.itemIds.includes(itemId))?.id ?? null;
-    },
+    (itemId: string): string | null => findContainerIn(data, itemId),
     [data],
   );
 
@@ -340,21 +343,6 @@ export function TierBoard({
     },
     [findContainer],
   );
-
-  function getIds(d: TierListData, container: string): string[] {
-    if (container === TRAY_ID) return d.tray;
-    if (container === WATCH_LATER_ID) return d.watchLater;
-    return d.rows.find((r) => r.id === container)?.itemIds ?? [];
-  }
-
-  function setIds(d: TierListData, container: string, ids: string[]): TierListData {
-    if (container === TRAY_ID) return { ...d, tray: ids };
-    if (container === WATCH_LATER_ID) return { ...d, watchLater: ids };
-    return {
-      ...d,
-      rows: d.rows.map((r) => (r.id === container ? { ...r, itemIds: ids } : r)),
-    };
-  }
 
   function handleDragStart(e: DragStartEvent) {
     setPicker(null); // чирэлт эхэлбэл нээлттэй picker хаагдана
@@ -375,14 +363,7 @@ export function TierBoard({
     const to = resolveContainer(overId);
     if (!from || !to || from === to) return;
 
-    setData((d) => {
-      const fromIds = getIds(d, from).filter((id) => id !== activeId);
-      const toIds = [...getIds(d, to)];
-      const overIndex = toIds.indexOf(overId);
-      const insertAt = overIndex >= 0 ? overIndex : toIds.length;
-      toIds.splice(insertAt, 0, activeId);
-      return setIds(setIds(d, from, fromIds), to, toIds);
-    });
+    setData((d) => moveToContainer(d, activeId, from, to, overId));
   }
 
   function handleDragEnd(e: DragEndEvent) {
@@ -402,12 +383,7 @@ export function TierBoard({
         return;
       }
       setItems((m) => ({ ...m, [itemId]: item }));
-      setData((d) => {
-        const toIds = [...getIds(d, to)];
-        const overIndex = toIds.indexOf(overId);
-        toIds.splice(overIndex >= 0 ? overIndex : toIds.length, 0, itemId);
-        return setIds(d, to, toIds);
-      });
+      setData((d) => insertFromSearch(d, itemId, to, overId));
       popDropped(itemId);
       return;
     }
@@ -443,20 +419,14 @@ export function TierBoard({
     setPicker(null);
     if (source === target) return;
 
-    if (source === "search") {
+    if (source === SEARCH_SOURCE) {
       if (boardItemIds.has(item.id)) {
         toast.info("Энэ нь аль хэдийн board дээр байна");
         return;
       }
       setItems((m) => ({ ...m, [item.id]: item }));
-      setData((d) => setIds(d, target, [...getIds(d, target), item.id]));
-    } else {
-      setData((d) => {
-        const fromIds = getIds(d, source).filter((id) => id !== item.id);
-        const toIds = [...getIds(d, target), item.id];
-        return setIds(setIds(d, source, fromIds), target, toIds);
-      });
     }
+    setData((d) => assignItemData(d, item.id, source, target));
     popDropped(item.id);
   }
 
@@ -467,24 +437,20 @@ export function TierBoard({
       return;
     }
     setItems((m) => ({ ...m, [item.id]: item }));
-    setData((d) => ({ ...d, watchLater: [...d.watchLater, item.id] }));
+    setData((d) => assignItemData(d, item.id, SEARCH_SOURCE, WATCH_LATER_ID));
     toast.success("«Дараа үзэх»-д нэмэгдлээ");
   }
 
   // ---------- Мөр удирдах ----------
   function addRow() {
-    setData((d) => ({
-      ...d,
-      rows: [
-        ...d.rows,
-        {
-          id: nanoid(6),
-          label: "Шинэ",
-          color: TIER_COLORS[d.rows.length % TIER_COLORS.length],
-          itemIds: [],
-        },
-      ],
-    }));
+    setData((d) =>
+      addRowData(d, {
+        id: nanoid(6),
+        label: "Шинэ",
+        color: TIER_COLORS[d.rows.length % TIER_COLORS.length],
+        itemIds: [],
+      }),
+    );
     // Шинэ мөр доороос эргэн орж ирнэ
     requestAnimationFrame(() => {
       gsap.from(".tier-row:last-child", {
@@ -498,21 +464,12 @@ export function TierBoard({
   }
 
   function deleteRow(rowId: string) {
-    setData((d) => {
-      const row = d.rows.find((r) => r.id === rowId);
-      return {
-        ...d, // watchLater зэрэг бусад талбарууд хэвээр үлдэнэ
-        rows: d.rows.filter((r) => r.id !== rowId),
-        tray: [...d.tray, ...(row?.itemIds ?? [])], // item-ууд нь эрэмбэлээгүй рүү буцна
-      };
-    });
+    // item-ууд нь эрэмбэлээгүй рүү буцна; watchLater хэвээр (tierData.test.ts)
+    setData((d) => removeRowData(d, rowId));
   }
 
   function saveRowEdit(rowId: string, label: string, color: string) {
-    setData((d) => ({
-      ...d,
-      rows: d.rows.map((r) => (r.id === rowId ? { ...r, label, color } : r)),
-    }));
+    setData((d) => editRowData(d, rowId, label, color));
     setEditingRow(null);
   }
 
@@ -784,7 +741,7 @@ export function TierBoard({
               watchLaterIds={new Set(data.watchLater)}
               selectedId={selected?.id ?? null}
               onSelect={setSelected}
-              onPick={openPicker("search")}
+              onPick={openPicker(SEARCH_SOURCE)}
               onWatchLater={addToWatchLater}
             />
           </div>

@@ -2,7 +2,7 @@
 // Genre жагсаалт TMDB дээр өөрчлөгддөггүй тул API дуудалт хэмнэж статик хадгалав.
 
 import { allTokensExact } from "@/lib/relevance";
-import type { BrowseSort } from "@/lib/genres";
+import type { BrowseSort, GenreMode } from "@/lib/genres";
 
 // .env-ийн утга буруу/дутуу байсан ч ажиллах хамгаалалт:
 // зөв домэйнтэй үед л env-ийн base URL-ийг хэрэглэнэ
@@ -294,15 +294,16 @@ export function searchTmdbTv(query: string): Promise<NormalizedMedia[]> {
  */
 export async function discoverTmdb(
   endpoint: "movie" | "tv",
-  opts: { genreIds: number[]; sort: BrowseSort; page: number },
+  opts: { genreIds: number[]; sort: BrowseSort; page: number; mode: GenreMode },
 ): Promise<{ items: NormalizedMedia[]; hasMore: boolean }> {
   const params = new URLSearchParams({
     include_adult: "false",
     language: "en-US",
     page: String(opts.page),
   });
+  // TMDB native дэмждэг: таслал = AND (бүгд), налуу зураас = OR (аль нэг)
   if (opts.genreIds.length > 0)
-    params.set("with_genres", opts.genreIds.join(",")); // таслал = AND
+    params.set("with_genres", opts.genreIds.join(opts.mode === "or" ? "|" : ","));
 
   const dateField =
     endpoint === "movie" ? "primary_release_date" : "first_air_date";

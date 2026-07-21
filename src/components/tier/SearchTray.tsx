@@ -26,9 +26,10 @@ import { POSTER_H } from "./PosterCard";
 import {
   BROWSE_CATS,
   BROWSE_GENRES,
-  matchesGenre,
+  matchesGenres,
   type BrowseCat,
   type BrowseSort,
+  type GenreMode,
 } from "@/lib/genres";
 import type { Category, MediaItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -144,6 +145,7 @@ export function SearchTray({
 
   // ---- Browse (хайлтгүй үзэх) төлөв ----
   const [selGenres, setSelGenres] = useState<string[]>([]);
+  const [genreMode, setGenreMode] = useState<GenreMode>("and");
   const [sort, setSort] = useState<BrowseSort>("popularity");
   const [browseItems, setBrowseItems] = useState<MediaItem[]>([]);
   const [browsePage, setBrowsePage] = useState(1);
@@ -233,6 +235,7 @@ export function SearchTray({
   function handleCatChange(next: Category) {
     setCat(next);
     setSelGenres([]); // genre-ууд category бүрд өөр тул цэвэрлэнэ
+    setGenreMode("and");
     setSort("popularity");
     startSearch(next, query); // одоогийн query-г шинэ таб-аар шууд дахин хайна
   }
@@ -243,10 +246,12 @@ export function SearchTray({
       bcat: BrowseCat,
       genres: string[],
       srt: BrowseSort,
+      mode: GenreMode,
       page: number,
       append: boolean,
     ) => {
-      const key = `browse:${bcat}:${srt}:${[...genres].sort().join(",")}:${page}`;
+      // Серверийн cache key-тэй ижил бүтэц (mode заавал орно)
+      const key = `browse:${bcat}:${srt}:${mode}:${[...genres].sort().join(",")}:${page}`;
       browseKeyRef.current = key;
       setRateLimited(false);
 
@@ -277,7 +282,7 @@ export function SearchTray({
 
       try {
         const res = await fetch(
-          `/api/browse?cat=${bcat}&genres=${encodeURIComponent(genres.join(","))}&sort=${srt}&page=${page}`,
+          `/api/browse?cat=${bcat}&genres=${encodeURIComponent(genres.join(","))}&sort=${srt}&mode=${mode}&page=${page}`,
           { signal: ac.signal },
         );
         if (res.status === 429) {
@@ -314,21 +319,21 @@ export function SearchTray({
   useEffect(() => {
     if (!browseMode) return;
     const t = setTimeout(
-      () => fetchBrowsePage(cat as BrowseCat, selGenres, sort, 1, false),
+      () => fetchBrowsePage(cat as BrowseCat, selGenres, sort, genreMode, 1, false),
       DEBOUNCE_MS,
     );
     return () => clearTimeout(t);
-  }, [browseMode, cat, selGenres, sort, fetchBrowsePage]);
+  }, [browseMode, cat, selGenres, sort, genreMode, fetchBrowsePage]);
 
   const activeTab = CATEGORY_TABS.find((t) => t.cat === cat)!;
   const genreDefs = isBrowseCat(cat) ? BROWSE_GENRES[cat] : [];
   const activeDefs = genreDefs.filter((g) => selGenres.includes(g.slug));
 
-  // Текст хайлттай үед сонгосон genre-үүд client-side (AND) шүүнэ
+  // Текст хайлттай үед сонгосон genre-үүд client-side шүүнэ (mode-оор)
   const filteredResults =
     activeDefs.length > 0
       ? results.filter((item) =>
-          activeDefs.every((def) => matchesGenre(item.genres, def)),
+          matchesGenres(item.genres, activeDefs, genreMode),
         )
       : results;
 
@@ -421,27 +426,61 @@ export function SearchTray({
               );
             })}
           </div>
-          {/* Sort — зөвхөн browse горимд (хайлтад relevance эрэмбэ ялна) */}
-          {browseMode && (
-            <div className="flex gap-1">
-              {SORT_TABS.map((s) => (
-                <button
-                  key={s.sort}
-                  type="button"
-                  onClick={() => setSort(s.sort)}
-                  className={cn(
-                    "flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-semibold transition-colors",
-                    sort === s.sort
-                      ? "bg-primary/20 text-primary"
-                      : "bg-white/[0.03] text-muted-foreground hover:bg-white/10 hover:text-foreground",
-                  )}
-                >
-                  <s.Icon className="h-3 w-3" />
-                  {s.label}
-                </button>
-              ))}
-            </div>
-          )}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            {/* Sort — зөвхөн browse горимд (хайлтад relevance эрэмбэ ялна) */}
+            {browseMode && (
+              <div className="flex gap-1">
+                {SORT_TABS.map((s) => (
+                  <button
+                    key={s.sort}
+                    type="button"
+                    onClick={() => setSort(s.sort)}
+                    className={cn(
+                      "flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-semibold transition-colors",
+                      sort === s.sort
+                        ? "bg-primary/20 text-primary"
+                        : "bg-white/[0.03] text-muted-foreground hover:bg-white/10 hover:text-foreground",
+                    )}
+                  >
+                    <s.Icon className="h-3 w-3" />
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* AND/OR — 2-оос доош genre сонгосон үед утгагүй тул нуугдана */}
+            {selGenres.length >= 2 && (
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] uppercase tracking-wider text-muted-foreground/50">
+                  Genre
+                </span>
+                <div className="flex rounded-lg bg-white/[0.03] p-0.5">
+                  {(
+                    [
+                      { mode: "and" as const, label: "БА", hint: "бүх genre-т таарсан нь" },
+                      { mode: "or" as const, label: "ЭСВЭЛ", hint: "аль нэг genre-т таарсан нь" },
+                    ]
+                  ).map((m) => (
+                    <button
+                      key={m.mode}
+                      type="button"
+                      title={m.hint}
+                      onClick={() => setGenreMode(m.mode)}
+                      className={cn(
+                        "rounded-md px-2 py-0.5 text-[11px] font-bold transition-colors",
+                        genreMode === m.mode
+                          ? "bg-primary/25 text-primary"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -484,7 +523,9 @@ export function SearchTray({
               {loading
                 ? ""
                 : activeDefs.length > 0 && results.length > 0
-                  ? "Сонгосон genre-д таарах үр дүн алга — шүүлтүүрээ цэвэрлээд үзээрэй"
+                  ? genreMode === "and" && activeDefs.length >= 2
+                    ? "Бүх genre-т таарах үр дүн алга — «ЭСВЭЛ» болгож үзээрэй"
+                    : "Сонгосон genre-д таарах үр дүн алга — шүүлтүүрээ цэвэрлээд үзээрэй"
                   : "Үр дүн олдсонгүй"}
             </p>
           )
@@ -505,6 +546,7 @@ export function SearchTray({
                 cat as BrowseCat,
                 selGenres,
                 sort,
+                genreMode,
                 browsePage + 1,
                 true,
               )

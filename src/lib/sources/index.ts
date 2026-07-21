@@ -18,11 +18,13 @@ import {
 import { searchOpenLibrary } from "./openlibrary";
 import { searchWikipedia } from "./wikipedia";
 import { CATEGORIES, type Category } from "@/lib/types";
+import { interleave } from "@/lib/batch";
 import {
   BROWSE_CATS,
   BROWSE_GENRES,
   type BrowseCat,
   type BrowseSort,
+  type GenreMode,
 } from "@/lib/genres";
 
 export { RateLimitError } from "./anilist";
@@ -41,9 +43,17 @@ export function isBrowseCategory(v: string | null): v is BrowseCat {
  * Browse горим: хайлтгүйгээр тухайн category-ийн алдартай/шинэ контентыг
  * genre-ээр шүүж хуудаслана. slug → TMDB id / AniList нэр энд хөрвөнө.
  */
+export interface BrowseOpts {
+  genreSlugs: string[];
+  sort: BrowseSort;
+  page: number;
+  /** Олон genre сонгосон үед: бүгд таарах (and) эсвэл аль нэг (or) */
+  mode: GenreMode;
+}
+
 export async function browseSource(
   cat: BrowseCat,
-  opts: { genreSlugs: string[]; sort: BrowseSort; page: number },
+  opts: BrowseOpts,
 ): Promise<{ items: NormalizedMedia[]; hasMore: boolean }> {
   const defs = BROWSE_GENRES[cat].filter((g) => opts.genreSlugs.includes(g.slug));
   switch (cat) {
@@ -53,6 +63,7 @@ export async function browseSource(
         genreIds: defs.map((g) => g.tmdbId!).filter(Boolean),
         sort: opts.sort,
         page: opts.page,
+        mode: opts.mode,
       });
     case "anime":
     case "manga":
@@ -60,20 +71,9 @@ export async function browseSource(
         genres: defs.map((g) => g.anilist!).filter(Boolean),
         sort: opts.sort,
         page: opts.page,
+        mode: opts.mode,
       });
   }
-}
-
-/** Хэд хэдэн source-ийн үр дүнг ээлжлэн (round-robin) хольж нэгтгэнэ */
-function interleave(lists: NormalizedMedia[][]): NormalizedMedia[] {
-  const out: NormalizedMedia[] = [];
-  const max = Math.max(0, ...lists.map((l) => l.length));
-  for (let i = 0; i < max; i++) {
-    for (const list of lists) {
-      if (i < list.length) out.push(list[i]);
-    }
-  }
-  return out;
 }
 
 /**

@@ -1,7 +1,8 @@
 // AniList GraphQL (key-гүй нийтийн API, ~30-90 req/мин rate limit-тэй)
 import type { NormalizedMedia } from "@/lib/tmdb";
-import type { BrowseSort } from "@/lib/genres";
+import type { BrowseSort, GenreMode } from "@/lib/genres";
 import { scoreMatch, allTokensExact, rankScored } from "@/lib/relevance";
+import { dedupeById, interleave } from "@/lib/batch";
 
 const ANILIST_URL = "https://graphql.anilist.co";
 
@@ -174,15 +175,15 @@ const ANILIST_BROWSE_SORT: Record<BrowseSort, string> = {
   newest: "START_DATE_DESC",
 };
 
-/**
- * Browse горим: хайлтгүйгээр genre + эрэмбээр хуудаслаж үзэх.
- * genre_in: [] нь AniList дээр 0 үр дүн өгдөг тул хоосон үед undefined
- * дамжуулна. newest дээр status_in шүүхгүй бол зөвхөн TBA/гараагүй
- * бүртгэлүүд эхэнд гарна.
- */
-export async function browseAnilist(
+/** OR горимд зэрэг явуулах хүсэлтийн дээд хязгаар (rate limit хамгаалалт) */
+const MAX_OR_GENRES = 4;
+
+/** Нэг genre багц (AND) дээрх нэг хуудас */
+async function browseAnilistPage(
   type: "ANIME" | "MANGA",
-  opts: { genres: string[]; sort: BrowseSort; page: number },
+  genres: string[],
+  sort: BrowseSort,
+  page: number,
 ): Promise<{ items: NormalizedMedia[]; hasMore: boolean }> {
   const gql = `
     query ($page: Int, $genres: [String], $sort: [MediaSort], $status: [MediaStatus]) {
@@ -194,10 +195,12 @@ export async function browseAnilist(
       }
     }`;
   const json = await anilistFetch(gql, {
-    page: opts.page,
-    genres: opts.genres.length > 0 ? opts.genres : undefined,
-    sort: [ANILIST_BROWSE_SORT[opts.sort]],
-    status: opts.sort === "newest" ? ["RELEASING", "FINISHED"] : undefined,
+    page,
+    // genre_in: [] нь AniList дээр 0 үр дүн өгдөг тул хоосон үед undefined
+    genres: genres.length > 0 ? genres : undefined,
+    sort: [ANILIST_BROWSE_SORT[sort]],
+    // newest дээр status шүүхгүй бол зөвхөн TBA/гараагүй бүртгэл эхэнд гарна
+    status: sort === "newest" ? ["RELEASING", "FINISHED"] : undefined,
   });
   const data = json.data as {
     Page: { pageInfo: { hasNextPage: boolean }; media: AlMedia[] };
@@ -208,6 +211,38 @@ export async function browseAnilist(
       .filter((m) => m.coverImage.extraLarge ?? m.coverImage.large)
       .map((m) => mapMedia(m, kind)),
     hasMore: data.Page.pageInfo.hasNextPage,
+  };
+}
+
+/**
+ * Browse горим: хайлтгүйгээр genre + эрэмбээр хуудаслаж үзэх.
+ * AniList-ийн `genre_in` нь эмпирикээр шалгахад **AND** (бүх genre таарна).
+ * Тиймээс OR горимд native дэмжлэг байхгүй — genre тус бүрээр зэрэг татаж
+ * round-robin-аар нийлүүлж, давхардлыг арилгана (кэш нь өдөрт нэг л удаа
+ * ийм хүсэлт явуулна).
+ */
+export async function browseAnilist(
+  type: "ANIME" | "MANGA",
+  opts: { genres: string[]; sort: BrowseSort; page: number; mode: GenreMode },
+): Promise<{ items: NormalizedMedia[]; hasMore: boolean }> {
+  if (opts.mode !== "or" || opts.genres.length < 2) {
+    return browseAnilistPage(type, opts.genres, opts.sort, opts.page);
+  }
+
+  const settled = await Promise.allSettled(
+    opts.genres
+      .slice(0, MAX_OR_GENRES)
+      .map((g) => browseAnilistPage(type, [g], opts.sort, opts.page)),
+  );
+  // Бүгд унасан бол (ж: rate limit) алдааг нь дээш дамжуулна
+  const ok = settled.filter((s) => s.status === "fulfilled");
+  if (ok.length === 0) {
+    const first = settled[0];
+    throw first?.status === "rejected" ? first.reason : new Error("AniList browse failed");
+  }
+  return {
+    items: dedupeById(interleave(ok.map((s) => s.value.items))),
+    hasMore: ok.some((s) => s.value.hasMore),
   };
 }
 

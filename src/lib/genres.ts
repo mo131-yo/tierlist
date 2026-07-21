@@ -5,9 +5,12 @@
 
 export type BrowseCat = "movie" | "tv" | "anime" | "manga";
 export type BrowseSort = "popularity" | "rating" | "newest";
+/** Олон genre сонгосон үеийн логик: "and" = бүгд таарна, "or" = аль нэг нь */
+export type GenreMode = "and" | "or";
 
 export const BROWSE_CATS = ["movie", "tv", "anime", "manga"] as const;
 export const BROWSE_SORTS = ["popularity", "rating", "newest"] as const;
+export const GENRE_MODES = ["and", "or"] as const;
 
 export interface GenreDef {
   slug: string;
@@ -91,4 +94,23 @@ export function matchesGenre(
   def: GenreDef,
 ): boolean {
   return itemGenres.includes(def.label) || (!!def.anilist && itemGenres.includes(def.anilist));
+}
+
+/**
+ * Олон genre-ийн шүүлт mode-оос хамаарна: "and" — бүгд байх ёстой,
+ * "or" — аль нэг нь хангалттай. Genre сонгоогүй бол бүгд өнгөрнө.
+ */
+export function matchesGenres(
+  itemGenres: string[],
+  defs: GenreDef[],
+  mode: GenreMode,
+): boolean {
+  if (defs.length === 0) return true;
+  return mode === "or"
+    ? defs.some((d) => matchesGenre(itemGenres, d))
+    : defs.every((d) => matchesGenre(itemGenres, d));
+}
+
+export function isGenreMode(v: string | null | undefined): v is GenreMode {
+  return v === "and" || v === "or";
 }
